@@ -15,6 +15,22 @@ from src.feedback_agent import AdaptiveDistillationPolicy, ActionRequest, Feedba
 import time
 
 
+def _checkpoint_score(metric, cumulative_micro, cumulative_macro,
+                      per_class_f1, old_types, new_types):
+    """Return the validation score used for checkpoint selection."""
+    if metric == "cumulative_macro_f1":
+        return cumulative_macro
+    if metric == "balanced_old_new_f1":
+        groups = []
+        for entity_types in (old_types, new_types):
+            values = [per_class_f1[name] for name in entity_types
+                      if name in per_class_f1]
+            if values:
+                groups.append(float(np.mean(values)))
+        return float(np.mean(groups)) if groups else cumulative_macro
+    return cumulative_micro
+
+
 def main_cl(params):
     # ===========================================================================
     # Using Fixed Random Seed
@@ -71,6 +87,9 @@ def main_cl(params):
         max_action_delta=getattr(params, "max_action_delta", 0.05),
         cooldown_steps=getattr(params, "cooldown_steps", 200)
     )
+    checkpoint_selection_metric = getattr(
+        params, "checkpoint_selection_metric", "cumulative_micro_f1")
+    logger.info("Checkpoint selection metric: %s", checkpoint_selection_metric)
     adaptive_policy = AdaptiveDistillationPolicy(
         drift_threshold=getattr(params, "feature_drift_threshold", 0.15),
         trigger_patience=getattr(params, "trigger_patience", 3),
@@ -452,10 +471,16 @@ def main_cl(params):
                         logger.info("Cumulative data: Epoch %d, Step %d: Dev_f1=%.3f, Dev_ma_f1=%.3f, Dev_f1_each_class=%s" % (
                             e, step, f1_dev_cumul, ma_f1_dev_cumul,
                             str(f1_dev_each_class_cumul)))
+                        selection_score = _checkpoint_score(
+                            checkpoint_selection_metric, f1_dev_cumul,
+                            ma_f1_dev_cumul, f1_dev_each_class_cumul,
+                            old_entity_list, new_entity_list)
+                        logger.info("Checkpoint selection score (%s)=%.3f",
+                                    checkpoint_selection_metric, selection_score)
                    
-                        if f1_dev_cumul > best_f1:
+                        if selection_score > best_f1:
                             logger.info("Find better model!!")
-                            best_f1 = f1_dev_cumul
+                            best_f1 = selection_score
                             no_improvement_num = 0
                             if iteration==0 and params.is_load_common_first_model:
                                 trainer.save_model(common_first_model_ckpt_name, 
@@ -510,11 +535,17 @@ def main_cl(params):
                 logger.info("Cumulative data: Epoch %d, Step %d: Dev_f1=%.3f, Dev_ma_f1=%.3f, Dev_f1_each_class=%s" % (
                     e, step, f1_dev_cumul, ma_f1_dev_cumul,
                     str(f1_dev_each_class_cumul)))
+                selection_score = _checkpoint_score(
+                    checkpoint_selection_metric, f1_dev_cumul,
+                    ma_f1_dev_cumul, f1_dev_each_class_cumul,
+                    old_entity_list, new_entity_list)
+                logger.info("Checkpoint selection score (%s)=%.3f",
+                            checkpoint_selection_metric, selection_score)
 
                 # Select the checkpoint using all classes seen so far.
-                if f1_dev_cumul > best_f1: # cumulative validation metric
+                if selection_score > best_f1:
                     logger.info("Find better model!!")
-                    best_f1 = f1_dev_cumul
+                    best_f1 = selection_score
                     no_improvement_num = 0
                     if iteration==0 and params.is_load_common_first_model:
                         # base model

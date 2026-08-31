@@ -108,6 +108,10 @@ def get_params():
                         help="Write observe-only feedback monitor records")
     parser.add_argument("--agent_mode", type=str, default="observe_only")
     parser.add_argument("--observe_interval_steps", type=int, default=200)
+    parser.add_argument("--checkpoint_selection_metric", type=str,
+                        default="cumulative_micro_f1",
+                        choices=["cumulative_micro_f1", "cumulative_macro_f1",
+                                 "balanced_old_new_f1"])
 
     params = parser.parse_args() # 默认配置
 
