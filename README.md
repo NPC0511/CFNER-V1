@@ -11,6 +11,7 @@ The RDP trainer remains responsible for model learning. A Python monitor records
 - Per-task `summary.csv` with new/old/seen class F1 and per-class F1 columns.
 - Observe-only JSONL task logs and fixed-probe feature-drift measurements.
 - Auditable action/no-action records and optional bounded KD multiplier with trigger patience, maximum delta, cooldown and rollback.
+- Optional confidence-weighted soft pseudo-label supervision for old classes.
 
 Qwen is not used to make direct training decisions in the current implementation.
 

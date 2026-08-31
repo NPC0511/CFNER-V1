@@ -31,3 +31,8 @@ summary_csv_enabled: true
 # to repeated P2 feature-drift observations and is automatically rolled back.
 adaptive_distillation_enabled: false
 feature_drift_threshold: 0.15
+
+# P5: disabled by default for clean ablations against the hard-label RDP path.
+soft_pseudo_labels_enabled: false
+soft_pseudo_min_confidence: 0.0
+soft_pseudo_confidence_power: 1.0

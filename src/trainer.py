@@ -174,7 +174,7 @@ class BaseTrainer(object):
 
         rectified = weights * probs
         rectified = rectified / rectified.sum(-1, keepdim=True)
-        _, pseudo_labels_rec = rectified.max(dim=-1)
+        pseudo_confidence, pseudo_labels_rec = rectified.max(dim=-1)
 
 
         labels[mask_background] = pseudo_labels_rec[mask_background]
@@ -188,7 +188,22 @@ class BaseTrainer(object):
         if torch.sum(ignore_mask.float())==0: 
             ce_loss = torch.tensor(0., requires_grad=True).cuda()
         else:
-            ce_loss = loss[ignore_mask].mean()  # scalar
+            if getattr(self.params, "soft_pseudo_labels_enabled", False) and torch.any(mask_background):
+                # Replace hard CE only on old/background tokens with a
+                # confidence-weighted teacher+prototype soft target. New-class
+                # and padding behavior remains unchanged.
+                student_log_probs = F.log_softmax(self.logits[:, :, :refer_dims], dim=-1)
+                soft_ce = -(rectified.detach() * student_log_probs).sum(dim=-1)
+                confidence_weight = pseudo_confidence.detach().clamp_min(
+                    float(getattr(self.params, "soft_pseudo_min_confidence", 0.0)))
+                soft_weight = confidence_weight.pow(
+                    float(getattr(self.params, "soft_pseudo_confidence_power", 1.0)))
+                weighted_soft_ce = soft_ce * soft_weight
+                combined_loss = loss.clone()
+                combined_loss[mask_background] = weighted_soft_ce[mask_background]
+                ce_loss = combined_loss[ignore_mask].mean()
+            else:
+                ce_loss = loss[ignore_mask].mean()  # scalar
 
 
         old_outputs = torch.sigmoid(refer_logits) # (bsz, seq_len, refer_dims)
