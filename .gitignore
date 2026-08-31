@@ -1,0 +1,17 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+
+# Dataset, trained models, and generated experiment output
+datasets/
+experiments/
+*.pt
+*.pth
+*.ckpt
+summary.csv
+
+# Local logs and editor files
+*.log
+.vscode/
+.DS_Store
+Thumbs.db

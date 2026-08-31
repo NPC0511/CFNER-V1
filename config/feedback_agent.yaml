@@ -1,0 +1,33 @@
+# Server-side settings for the Feedback-RDP Agent.
+# Keep the Qwen checkpoint outside the repository.
+agent_enabled: false
+agent_mode: observe_only
+qwen_enabled: false
+qwen_model_path: /root/autodl-tmp/models/Qwen2.5-1.5B-Instruct
+qwen_temperature: 0.0
+qwen_max_new_tokens: 512
+qwen_dtype: float32
+qwen_task_call_budget: 2
+qwen_anomaly_call_budget: 1
+qwen_reflection_call_budget: 1
+observe_interval_steps: 200
+feature_probe_max_tokens: 500
+effect_window_steps: 500
+min_old_class_tokens: 30
+min_gradient_batches: 3
+ema_decay: 0.9
+max_distillation_weight: 1.5
+max_prototype_anchor_weight: 1.5
+max_action_delta: 0.05
+trigger_patience: 3
+cooldown_steps: 200
+
+# P3 scaffolding: proposed actions are validated and logged only.
+# No setting here changes a loss weight or model parameter.
+action_logging_enabled: true
+summary_csv_enabled: true
+
+# P4: disabled by default. When enabled, a bounded KD multiplier reacts only
+# to repeated P2 feature-drift observations and is automatically rolled back.
+adaptive_distillation_enabled: false
+feature_drift_threshold: 0.15
