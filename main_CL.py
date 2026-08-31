@@ -81,7 +81,8 @@ def main_cl(params):
         enabled=getattr(params, "agent_enabled", False),
         observe_interval_steps=getattr(params, "observe_interval_steps", 200),
         feature_probe_max_tokens=getattr(params, "feature_probe_max_tokens", 500),
-        summary_enabled=getattr(params, "summary_csv_enabled", True)
+        summary_enabled=getattr(params, "summary_csv_enabled", True),
+        prototype_stats_enabled=getattr(params, "prototype_stats_enabled", True)
     )
     observe_only_policy = ObserveOnlyPolicy(
         max_action_delta=getattr(params, "max_action_delta", 0.05),
@@ -362,6 +363,10 @@ def main_cl(params):
 
         if iteration>0:
             trainer.before_prototype(train_loader=dataloader_train)
+            feedback_monitor.record_prototype_stats(
+                trainer.prototypes, trainer.prototype_variances,
+                trainer.count_features
+            )
             feedback_monitor.capture_feature_probe(
                 dataloader=dataloader_dev_cumul, reference_model=trainer.refer_model,
                 old_types=old_entity_list

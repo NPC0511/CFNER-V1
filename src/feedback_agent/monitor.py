@@ -10,10 +10,12 @@ class FeedbackMonitor(object):
     """Collect small CPU summaries without changing training state."""
 
     def __init__(self, output_dir, enabled=False, observe_interval_steps=200,
-                 feature_probe_max_tokens=500, summary_enabled=True):
+                 feature_probe_max_tokens=500, summary_enabled=True,
+                 prototype_stats_enabled=True):
         self.output_dir = output_dir
         self.enabled = bool(enabled)
         self.summary_enabled = bool(summary_enabled)
+        self.prototype_stats_enabled = bool(prototype_stats_enabled)
         self.observe_interval_steps = max(int(observe_interval_steps), 1)
         self.task_summary = None
         self.task_path = ""
@@ -49,7 +51,8 @@ class FeedbackMonitor(object):
 
     def record_action(self, action_record):
         """Append a proposed/validated action without applying it to training."""
-        if not self.enabled or self.task_summary is None or not self.task_path:
+        if (not self.enabled or not self.prototype_stats_enabled
+                or self.task_summary is None or not self.task_path):
             return
         record = action_record.to_dict()
         record["timestamp"] = time.time()
@@ -57,6 +60,27 @@ class FeedbackMonitor(object):
         with open(self.task_path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=True) + "\n")
         self.task_summary["action_records"] = self.task_summary.get("action_records", 0) + 1
+
+    def record_prototype_stats(self, prototypes, variances, counts):
+        """Persist prototype mean/variance/count without affecting training."""
+        if not self.enabled or self.task_summary is None or not self.task_path:
+            return
+        stats = {}
+        for index, count in enumerate(counts.detach().cpu().tolist()):
+            if count <= 0:
+                continue
+            stats[str(index)] = {
+                "count": int(count),
+                "mean_l2": float(prototypes[index].detach().norm().cpu().item()),
+                "variance_mean": float(variances[index].detach().mean().cpu().item()),
+                "variance_l2": float(variances[index].detach().norm().cpu().item()),
+            }
+        record = {"timestamp": time.time(), "record_type": "prototype_stats",
+                  "prototype_stats": stats}
+        with open(self.task_path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=True) + "\n")
+        self.task_summary["prototype_classes_observed"] = len(stats)
+        self.task_summary["prototype_low_count_classes"] = sum(1 for item in stats.values() if item["count"] < 30)
 
     def capture_feature_probe(self, dataloader, reference_model, old_types):
         """Freeze an old-class probe and its teacher feature means for P2."""

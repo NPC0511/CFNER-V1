@@ -62,7 +62,7 @@ class BaseTrainer(object):
         return ce_loss.item() 
 
 
-    def _update_running_stats(self, labels_down, features, prototypes, count_features):
+    def _update_running_stats(self, labels_down, features, prototypes, count_features, m2_features):
         cl_present = torch.unique(input=labels_down)
    
         cl_present=torch.where((cl_present < self.old_classes) & (cl_present != pad_token_label_id), cl_present, pad_token_label_id)
@@ -75,7 +75,16 @@ class BaseTrainer(object):
 
         for cl in cl_present:
             features_cl = features[(labels_down == cl).expand(-1, -1, features.shape[-1])].view(features.shape[-1], -1).detach()
-            features_local_mean[cl] = torch.mean(features_cl.detach(), dim=-1)
+            batch_mean = torch.mean(features_cl.detach(), dim=-1)
+            features_local_mean[cl] = batch_mean
+            batch_m2 = torch.sum((features_cl.detach() - batch_mean.unsqueeze(-1)) ** 2, dim=-1)
+            old_count = count_features[cl].float()
+            batch_count = float(features_cl.shape[-1])
+            if old_count > 0:
+                delta = batch_mean - prototypes.detach()[cl]
+                m2_features[cl] += batch_m2 + delta.pow(2) * old_count * batch_count / (old_count + batch_count)
+            else:
+                m2_features[cl] += batch_m2
             features_cl_sum = torch.sum(features_cl.detach(), dim=-1)
             features_running_mean_tot_cl = (features_cl_sum + count_features.detach()[cl] *
                                             prototypes.detach()[cl]) \
@@ -83,7 +92,7 @@ class BaseTrainer(object):
             count_features[cl] += features_cl.shape[-1]
             prototypes[cl] = features_running_mean_tot_cl
 
-        return prototypes, count_features
+        return prototypes, count_features, m2_features
 
     def update_prototypes(self, train_loader):
   
@@ -93,6 +102,7 @@ class BaseTrainer(object):
         count_features = torch.zeros([self.old_classes], dtype=torch.long)
         count_features.requires_grad = False
         count_features = count_features.cuda()
+        m2_features = torch.zeros([self.old_classes, self.params.hidden_dim]).cuda()
 
         for X, labels in train_loader:
             X = X.cuda()
@@ -109,10 +119,12 @@ class BaseTrainer(object):
             mask_bg = labels == 0
             labels[mask_bg] = pseudo_probas[mask_bg]
      
-            prototypes, count_features = self._update_running_stats(labels.unsqueeze(-1).long(), refer_features, prototypes,
-                                                                    count_features)
+            prototypes, count_features, m2_features = self._update_running_stats(
+                labels.unsqueeze(-1).long(), refer_features, prototypes,
+                count_features, m2_features)
 
-        return prototypes, count_features
+        variances = m2_features / count_features.clamp_min(1).float().unsqueeze(-1)
+        return prototypes, count_features, variances
 
     def get_prototype_weight(self, feat):
         feat_proto_distance = self.feat_prototype_distance(feat)
@@ -128,7 +140,7 @@ class BaseTrainer(object):
 
     
     def before_prototype(self, train_loader):
-        self.prototypes, self.count_features = self.update_prototypes(
+        self.prototypes, self.count_features, self.prototype_variances = self.update_prototypes(
                 train_loader)
 
 

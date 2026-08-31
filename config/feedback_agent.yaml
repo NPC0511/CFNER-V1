@@ -37,3 +37,4 @@ feature_drift_threshold: 0.15
 soft_pseudo_labels_enabled: false
 soft_pseudo_min_confidence: 0.0
 soft_pseudo_confidence_power: 1.0
+prototype_stats_enabled: true
