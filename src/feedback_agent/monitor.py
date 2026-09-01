@@ -16,7 +16,8 @@ class FeedbackMonitor(object):
                  prototype_stats_enabled=True,
                  structured_state_logging_enabled=True,
                  teacher_confusion_enabled=True,
-                 pseudo_uncertainty_enabled=True):
+                 pseudo_uncertainty_enabled=True,
+                 prototype_similarity_enabled=True):
         self.output_dir = output_dir
         self.enabled = bool(enabled)
         self.summary_enabled = bool(summary_enabled)
@@ -24,6 +25,7 @@ class FeedbackMonitor(object):
         self.structured_state_logging_enabled = bool(structured_state_logging_enabled)
         self.teacher_confusion_enabled = bool(teacher_confusion_enabled)
         self.pseudo_uncertainty_enabled = bool(pseudo_uncertainty_enabled)
+        self.prototype_similarity_enabled = bool(prototype_similarity_enabled)
         self.observe_interval_steps = max(int(observe_interval_steps), 1)
         self.task_summary = None
         self.task_path = ""
@@ -307,6 +309,55 @@ class FeedbackMonitor(object):
         if self.state is not None:
             self.state.step = int(step)
             self.state.metrics["pseudo_uncertainty"] = result
+        return result
+
+    def observe_prototype_similarity(self, step, feature_model, prototypes):
+        """Compare current probe feature means with stored old-class prototypes."""
+        if (not self.enabled or not self.prototype_similarity_enabled
+                or self.task_summary is None or not self.task_path
+                or not self.feature_probe):
+            return None
+        import torch
+        device = next(feature_model.parameters()).device
+        sums, counts = {}, {}
+        was_training = feature_model.training
+        feature_model.eval()
+        with torch.no_grad():
+            for inputs_cpu, labels_cpu in self.feature_probe:
+                features = feature_model.forward_encoder(inputs_cpu.to(device)).detach().cpu()
+                labels_cpu = labels_cpu.view(-1)
+                features = features.view(-1, features.shape[-1])
+                for entity_type in self.old_types:
+                    ids = [i for i, name in enumerate(self.label_list)
+                           if name[2:] == entity_type and name[:2] in ("B-", "I-", "E-", "S-")]
+                    mask = torch.zeros_like(labels_cpu, dtype=torch.bool)
+                    for label_id in ids:
+                        mask |= labels_cpu == label_id
+                    if torch.any(mask):
+                        sums[entity_type] = sums.get(entity_type, torch.zeros(features.shape[-1])) + features[mask].sum(0)
+                        counts[entity_type] = counts.get(entity_type, 0) + int(mask.sum().item())
+        feature_model.train(was_training)
+        prototype_cpu = prototypes.detach().cpu()
+        result = {}
+        for entity_type, feature_sum in sums.items():
+            ids = [i for i, name in enumerate(self.label_list)
+                   if name[2:] == entity_type and name[:2] in ("B-", "I-", "E-", "S-") and i < prototype_cpu.shape[0]]
+            if not ids:
+                continue
+            current = feature_sum / counts[entity_type]
+            target = prototype_cpu[ids].mean(0)
+            result[entity_type] = float(torch.nn.functional.cosine_similarity(current[None], target[None]).item())
+        record = {"timestamp": time.time(), "step": int(step),
+                  "prototype_similarity": result, "prototype_similarity_counts": counts}
+        with open(self.task_path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=True) + "\n")
+        self.task_summary["latest_prototype_similarity"] = result
+        if self.state is not None:
+            self.state.step = int(step)
+            self.state.metrics["prototype_similarity"] = dict(result)
+            for entity_type, value in result.items():
+                if entity_type in self.state.old_classes:
+                    self.state.old_classes[entity_type].prototype_similarity = value
         return result
 
     def end_task(self, metrics=None):

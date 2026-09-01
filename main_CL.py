@@ -88,7 +88,9 @@ def main_cl(params):
         teacher_confusion_enabled=getattr(
             params, "teacher_confusion_enabled", True),
         pseudo_uncertainty_enabled=getattr(
-            params, "pseudo_uncertainty_enabled", True)
+            params, "pseudo_uncertainty_enabled", True),
+        prototype_similarity_enabled=getattr(
+            params, "prototype_similarity_enabled", True)
     )
     observe_only_policy = ObserveOnlyPolicy(
         max_action_delta=getattr(params, "max_action_delta", 0.05),
@@ -436,6 +438,10 @@ def main_cl(params):
                 drift = feedback_monitor.observe_feature_drift(
                     step=step, feature_model=trainer.model
                 )
+                if iteration > 0 and step % feedback_monitor.observe_interval_steps == 0:
+                    feedback_monitor.observe_prototype_similarity(
+                        step=step, feature_model=trainer.model,
+                        prototypes=trainer.prototypes)
                 if getattr(params, "adaptive_distillation_enabled", False) and drift:
                     action_record = adaptive_policy.update(step, drift)
                     if action_record is not None:
