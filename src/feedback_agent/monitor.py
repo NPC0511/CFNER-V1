@@ -7,6 +7,7 @@ import time
 
 from .state import OldClassState, TrainingState
 from .semantic_risk import build_risk_map
+from .reflection import ReflectionMemory
 
 
 class FeedbackMonitor(object):
@@ -19,7 +20,8 @@ class FeedbackMonitor(object):
                  teacher_confusion_enabled=True,
                  pseudo_uncertainty_enabled=True,
                  prototype_similarity_enabled=True,
-                 gradient_conflict_enabled=True):
+                 gradient_conflict_enabled=True, reflection_enabled=True,
+                 reflection_forgetting_threshold=1.0):
         self.output_dir = output_dir
         self.enabled = bool(enabled)
         self.summary_enabled = bool(summary_enabled)
@@ -29,6 +31,9 @@ class FeedbackMonitor(object):
         self.pseudo_uncertainty_enabled = bool(pseudo_uncertainty_enabled)
         self.prototype_similarity_enabled = bool(prototype_similarity_enabled)
         self.gradient_conflict_enabled = bool(gradient_conflict_enabled)
+        self.reflection_memory = ReflectionMemory(
+            output_dir, enabled=reflection_enabled,
+            forgetting_threshold=reflection_forgetting_threshold)
         self.observe_interval_steps = max(int(observe_interval_steps), 1)
         self.task_summary = None
         self.task_path = ""
@@ -38,6 +43,7 @@ class FeedbackMonitor(object):
         self.summary_csv_path = ""
         self.entity_types = []
         self.state = None
+        self.action_records = []
 
     def begin_task(self, task_id, domain, new_types, old_types, label_list):
         if not self.enabled and not self.summary_enabled:
@@ -65,6 +71,7 @@ class FeedbackMonitor(object):
             task_id=int(task_id), domain=str(domain), new_types=list(new_types),
             old_types=list(old_types), seen_types=list(old_types) + list(new_types),
             old_classes={name: OldClassState(name) for name in old_types})
+        self.action_records = []
         if self.task_path:
             with open(self.task_path, "w", encoding="utf-8"):
                 pass
@@ -80,6 +87,7 @@ class FeedbackMonitor(object):
         with open(self.task_path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=True) + "\n")
         self.task_summary["action_records"] = self.task_summary.get("action_records", 0) + 1
+        self.action_records.append(record)
 
     def record_prototype_stats(self, prototypes, variances, counts):
         """Persist prototype mean/variance/count without affecting training."""
@@ -424,6 +432,13 @@ class FeedbackMonitor(object):
                 json.dump(summary, handle, ensure_ascii=True, indent=2)
         if self.summary_enabled and summary.get("metrics", {}).get("status") == "completed":
             self._append_summary_csv(summary["metrics"])
+        reflection_path = self.reflection_memory.write(
+            self.state, summary.get("latest_semantic_risk"), self.action_records)
+        if reflection_path:
+            summary["reflection_path"] = reflection_path
+            if self.task_path:
+                with open(path, "w", encoding="utf-8") as handle:
+                    json.dump(summary, handle, ensure_ascii=True, indent=2)
         self.task_summary = None
         return path if self.task_path else self.summary_csv_path
 

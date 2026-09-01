@@ -92,7 +92,10 @@ def main_cl(params):
         prototype_similarity_enabled=getattr(
             params, "prototype_similarity_enabled", True),
         gradient_conflict_enabled=getattr(
-            params, "gradient_conflict_enabled", True)
+            params, "gradient_conflict_enabled", True),
+        reflection_enabled=getattr(params, "reflection_enabled", True),
+        reflection_forgetting_threshold=getattr(
+            params, "reflection_forgetting_threshold", 1.0)
     )
     observe_only_policy = ObserveOnlyPolicy(
         max_action_delta=getattr(params, "max_action_delta", 0.05),
