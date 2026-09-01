@@ -22,16 +22,33 @@ class RiskNode:
 
 
 @dataclass
+class RiskEdge:
+    """Directed interference risk from a current new type to an old type."""
+    source: str
+    target: str
+    risk: float = 0.0
+    risk_type: List[str] = field(default_factory=list)
+    reason: str = ""
+    evidence: Dict[str, Optional[float]] = field(default_factory=dict)
+    source_kind: str = "observed_training_evidence"
+
+    def to_dict(self):
+        return asdict(self)
+
+
+@dataclass
 class SemanticRiskMap:
     task_id: int
     step: int
     nodes: Dict[str, RiskNode] = field(default_factory=dict)
+    edges: List[RiskEdge] = field(default_factory=list)
     source: str = "python_rules"
 
     def to_dict(self):
         return {"task_id": self.task_id, "step": self.step,
                 "source": self.source,
-                "nodes": {name: node.to_dict() for name, node in self.nodes.items()}}
+                "nodes": {name: node.to_dict() for name, node in self.nodes.items()},
+                "edges": [edge.to_dict() for edge in self.edges]}
 
 
 def build_risk_map(state, drift_threshold=0.15, confusion_threshold=0.20,
@@ -68,4 +85,15 @@ def build_risk_map(state, drift_threshold=0.15, confusion_threshold=0.20,
         score = min(1.0, sum(signals) / max(len(signals), 1))
         level = "high" if score >= high_score else "medium" if score >= medium_score else "low"
         risk_map.nodes[entity_type] = RiskNode(entity_type, score, level, reasons, evidence)
+    # Preserve the planned directed graph contract even before semantic-memory
+    # and LLM priors are available. Each current new type gets one edge to each
+    # old type, carrying the target class's observed training evidence.
+    for source in state.new_types:
+        for target in state.old_types:
+            node = risk_map.nodes.get(target, RiskNode(target))
+            risk_map.edges.append(RiskEdge(
+                source=source, target=target, risk=node.score,
+                risk_type=list(node.reasons), evidence=dict(node.evidence),
+                reason=("Observed evidence for old target %s; source-specific "
+                        "semantic prior is not configured." % target)))
     return risk_map

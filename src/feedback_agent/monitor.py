@@ -4,6 +4,7 @@ import json
 import csv
 import os
 import time
+import hashlib
 
 from .state import OldClassState, TrainingState
 from .semantic_risk import build_risk_map
@@ -454,12 +455,27 @@ class FeedbackMonitor(object):
             return None
         risk_map = build_risk_map(self.state, drift_threshold, confusion_threshold,
                                   entropy_threshold, similarity_threshold)
+        risk_map_dict = risk_map.to_dict()
+        risk_map_dict["config_fingerprint"] = hashlib.sha1(
+            json.dumps({"drift_threshold": drift_threshold,
+                        "confusion_threshold": confusion_threshold,
+                        "entropy_threshold": entropy_threshold,
+                        "similarity_threshold": similarity_threshold},
+                       sort_keys=True).encode("utf-8")).hexdigest()
         with open(self.task_path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps({"timestamp": time.time(),
                                      "record_type": "semantic_risk",
-                                     "semantic_risk": risk_map.to_dict()},
+                                     "semantic_risk": risk_map_dict},
                                     ensure_ascii=True) + "\n")
-        self.task_summary["latest_semantic_risk"] = risk_map.to_dict()
+        self.task_summary["latest_semantic_risk"] = risk_map_dict
+        cache_dir = os.path.join(self.output_dir, "semantic_cache", "risk_graph")
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_path = os.path.join(cache_dir, "%s_task_%d.json" %
+                                   (self.state.domain, self.state.task_id))
+        latest_path = os.path.join(cache_dir, "%s_latest.json" % self.state.domain)
+        for destination in (cache_path, latest_path):
+            with open(destination, "w", encoding="utf-8") as handle:
+                json.dump(risk_map_dict, handle, ensure_ascii=True, indent=2)
         return risk_map
 
     def _append_summary_csv(self, metrics):
