@@ -84,7 +84,9 @@ def main_cl(params):
         summary_enabled=getattr(params, "summary_csv_enabled", True),
         prototype_stats_enabled=getattr(params, "prototype_stats_enabled", True),
         structured_state_logging_enabled=getattr(
-            params, "structured_state_logging_enabled", True)
+            params, "structured_state_logging_enabled", True),
+        teacher_confusion_enabled=getattr(
+            params, "teacher_confusion_enabled", True)
     )
     observe_only_policy = ObserveOnlyPolicy(
         max_action_delta=getattr(params, "max_action_delta", 0.05),
@@ -409,6 +411,10 @@ def main_cl(params):
                 monitor_labels = y.clone()
                 if iteration>0:
                     ce_loss, distill_loss = trainer.batch_loss_rdp(y)
+                    feedback_monitor.observe_teacher_confusion(
+                        step=step, labels=monitor_labels,
+                        teacher_logits=trainer.last_refer_logits,
+                        old_types=old_entity_list, new_types=new_entity_list)
                     ce_list.append(ce_loss)
                     distill_list.append(distill_loss)
                 else: #  第一个任务 只有ce loss

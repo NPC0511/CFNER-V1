@@ -14,12 +14,14 @@ class FeedbackMonitor(object):
     def __init__(self, output_dir, enabled=False, observe_interval_steps=200,
                  feature_probe_max_tokens=500, summary_enabled=True,
                  prototype_stats_enabled=True,
-                 structured_state_logging_enabled=True):
+                 structured_state_logging_enabled=True,
+                 teacher_confusion_enabled=True):
         self.output_dir = output_dir
         self.enabled = bool(enabled)
         self.summary_enabled = bool(summary_enabled)
         self.prototype_stats_enabled = bool(prototype_stats_enabled)
         self.structured_state_logging_enabled = bool(structured_state_logging_enabled)
+        self.teacher_confusion_enabled = bool(teacher_confusion_enabled)
         self.observe_interval_steps = max(int(observe_interval_steps), 1)
         self.task_summary = None
         self.task_path = ""
@@ -72,7 +74,8 @@ class FeedbackMonitor(object):
 
     def record_prototype_stats(self, prototypes, variances, counts):
         """Persist prototype mean/variance/count without affecting training."""
-        if not self.enabled or self.task_summary is None or not self.task_path:
+        if (not self.enabled or not self.teacher_confusion_enabled
+                or self.task_summary is None or not self.task_path):
             return
         stats = {}
         for index, count in enumerate(counts.detach().cpu().tolist()):
@@ -230,6 +233,46 @@ class FeedbackMonitor(object):
             summary["loss_count"] += 1
         for name, count in counts.items():
             summary["label_counts"][name] = summary["label_counts"].get(name, 0) + count
+
+    def observe_teacher_confusion(self, step, labels, teacher_logits,
+                                  old_types, new_types):
+        """Measure teacher predictions of old classes on gold new-class tokens."""
+        if not self.enabled or self.task_summary is None or not self.task_path:
+            return None
+        import torch
+        labels_cpu = labels.detach().view(-1).cpu()
+        logits_cpu = teacher_logits.detach().view(-1, teacher_logits.shape[-1]).cpu()
+        predictions = logits_cpu.argmax(dim=-1)
+        old_ids = {i for i, name in enumerate(self.label_list)
+                   if name[2:] in old_types and name[:2] in ("B-", "I-", "E-", "S-")}
+        result = {}
+        for entity_type in new_types:
+            new_ids = {i for i, name in enumerate(self.label_list)
+                       if name[2:] == entity_type and name[:2] in ("B-", "I-", "E-", "S-")}
+            mask = torch.zeros_like(labels_cpu, dtype=torch.bool)
+            for label_id in new_ids:
+                mask |= labels_cpu == label_id
+            count = int(mask.sum().item())
+            confusion = (float(sum(1 for value in predictions[mask].tolist()
+                                   if value in old_ids)) / count) if count else None
+            result[entity_type] = confusion
+        record = {"timestamp": time.time(), "step": int(step),
+                  "teacher_confusion": result,
+                  "teacher_confusion_counts": {
+                      key: int(sum(1 for i in labels_cpu.tolist()
+                                   if i in {j for j, name in enumerate(self.label_list)
+                                            if name[2:] == key and name[:2] in ("B-", "I-", "E-", "S-")}))
+                      for key in new_types}}
+        with open(self.task_path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=True) + "\n")
+        self.task_summary["latest_teacher_confusion"] = result
+        if self.state is not None:
+            self.state.step = int(step)
+            self.state.metrics["teacher_confusion"] = dict(result)
+            for entity_type, value in result.items():
+                if entity_type in self.state.old_classes:
+                    self.state.old_classes[entity_type].teacher_confusion = value
+        return result
 
     def end_task(self, metrics=None):
         if self.task_summary is None:

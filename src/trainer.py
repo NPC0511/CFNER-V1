@@ -172,6 +172,7 @@ class BaseTrainer(object):
             self.refer_model.eval()
             refer_features = self.refer_model.forward_encoder(self.inputs)
             refer_logits = self.refer_model.forward_classifier(refer_features)# (bsz,seq_len,refer_dims)
+            self.last_refer_logits = refer_logits.detach()
             assert refer_logits.shape[:2] == self.logits.shape[:2], \
                     "the first 2 dims of refer_logits and logits are not equal!!!"
      
