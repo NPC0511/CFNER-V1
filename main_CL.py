@@ -12,7 +12,8 @@ from src.model import *
 from src.config import *
 from src.feedback_agent import (AdaptiveDistillationPolicy, ActionRequest,
                                 FeedbackMonitor, ObserveOnlyPolicy,
-                                RiskGatedDistillationPolicy, QwenRiskAdvisor)
+                                RiskGatedDistillationPolicy, QwenRiskAdvisor,
+                                build_task_policy)
 
 import time
 
@@ -289,6 +290,26 @@ def main_cl(params):
                                iteration, qwen_result.get("error", "unknown_error"))
                 logger.warning("Qwen raw output task %d: %s", iteration,
                                qwen_result.get("raw_output", "")[:4000])
+            task_risk_graph, risk_kd_policy = build_task_policy(
+                task_id=iteration, domain=domain_name,
+                new_types=new_entity_list, old_types=old_entity_list,
+                label_list=label_list, semantic_memory=feedback_monitor.semantic_memory,
+                qwen_assessment=feedback_monitor.qwen_assessment,
+                rule_risk_weight=getattr(params, "rule_risk_weight", 0.6),
+                llm_risk_weight=getattr(params, "llm_risk_weight", 0.4),
+                medium_threshold=getattr(params, "risk_kd_medium_threshold", 0.50),
+                high_threshold=getattr(params, "risk_kd_high_threshold", 0.75),
+                medium_weight=getattr(params, "risk_kd_medium_weight", 1.15),
+                high_weight=getattr(params, "risk_kd_high_weight", 1.30))
+            task_graph_path = feedback_monitor.record_task_risk_graph(task_risk_graph)
+            trainer.set_risk_kd_policy(
+                risk_kd_policy,
+                enabled=getattr(params, "risk_weighted_kd_enabled", False))
+            logger.info("Frozen task risk KD policy saved to %s: target_risks=%s, label_weights=%s",
+                        task_graph_path, risk_kd_policy.target_risks,
+                        risk_kd_policy.label_weights)
+        else:
+            trainer.set_risk_kd_policy(None, enabled=False)
         # Establish the no-action control record for later paired experiments.
         if getattr(params, "action_logging_enabled", False):
             feedback_monitor.record_action(observe_only_policy.validate(ActionRequest(
@@ -414,6 +435,12 @@ def main_cl(params):
             elif os.path.isfile(best_model_ckpt_path): # 之前跑过的其他任务也可以跳过，此时没有训练 只有测试 (之前跑过的setting 相同条件下重复运行 相当于只进行测试）
                 logger.info("Skip training %d-th iter checkpoint %s exists"%\
                                 (iteration+1, best_model_ckpt_path))
+                if (iteration > 0
+                        and getattr(params, "risk_weighted_kd_enabled", False)
+                        and getattr(params, "risk_kd_require_fresh_training", True)):
+                    raise ValueError(
+                        "Risk-weighted KD requires a fresh experiment ID; "
+                        "checkpoint already exists: %s" % best_model_ckpt_path)
                 training_epochs = 0
 
                 
@@ -711,12 +738,14 @@ def main_cl(params):
             "test_macro_f1": float(ma_f1_test_cumul),
             "per_class_f1": f1_test_each_class_cumul,
             "f1_before": f1_before,
+            "risk_kd_diagnostics": trainer.get_risk_kd_diagnostics(),
             "new_class_average_f1": mean_f1(new_entity_list),
             "old_class_average_f1": mean_f1(old_entity_list),
             "seen_class_average_f1": mean_f1(all_seen_entity_list),
             "new_types": new_entity_list, "old_types": old_entity_list,
             "seen_types": all_seen_entity_list
         })
+        logger.info("Risk KD diagnostics: %s", str(trainer.get_risk_kd_diagnostics()))
         if monitor_path:
             logger.info("Feedback monitor summary saved to %s", monitor_path)
         logger.info("Finish testing the %d-th iter!"%(iteration+1))

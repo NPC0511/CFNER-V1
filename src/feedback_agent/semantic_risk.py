@@ -31,6 +31,11 @@ class RiskEdge:
     reason: str = ""
     evidence: Dict[str, Optional[float]] = field(default_factory=dict)
     source_kind: str = "observed_training_evidence"
+    rule_risk: float = 0.0
+    llm_risk: float = 0.0
+    observed_risk: float = 0.0
+    historical_vulnerability: float = 0.0
+    final_risk: float = 0.0
 
     def to_dict(self):
         return asdict(self)
@@ -43,12 +48,52 @@ class SemanticRiskMap:
     nodes: Dict[str, RiskNode] = field(default_factory=dict)
     edges: List[RiskEdge] = field(default_factory=list)
     source: str = "python_rules"
+    training_policy: Dict[str, object] = field(default_factory=dict)
 
     def to_dict(self):
         return {"task_id": self.task_id, "step": self.step,
                 "source": self.source,
                 "nodes": {name: node.to_dict() for name, node in self.nodes.items()},
-                "edges": [edge.to_dict() for edge in self.edges]}
+                "edges": [edge.to_dict() for edge in self.edges],
+                "training_policy": dict(self.training_policy)}
+
+
+def _llm_risk(llm_edge):
+    if not llm_edge:
+        return 0.0
+    components = [llm_edge.get(name, 0) for name in
+                  ("semantic_overlap", "annotation_conflict", "context_overlap")]
+    return 0.05 + 0.95 * (0.30 * components[0] + 0.45 * components[1]
+                          + 0.25 * components[2]) / 2.0
+
+
+def build_task_risk_graph(task_id, domain, new_types, old_types,
+                          semantic_memory=None, qwen_assessment=None,
+                          rule_risk_weight=0.6, llm_risk_weight=0.4):
+    """Build the immutable semantic prior used for one task's KD policy."""
+    graph = SemanticRiskMap(task_id=int(task_id), step=0, source="task_start")
+    for source in new_types:
+        for target in old_types:
+            rule_risk, rule_types, rule_reason = (
+                semantic_memory.rule_risk(source, target)
+                if semantic_memory is not None else (0.0, [], ""))
+            llm_edge = (qwen_assessment or {}).get((source, target), {})
+            llm_risk = _llm_risk(llm_edge)
+            has_llm = bool(llm_edge)
+            initial_risk = ((rule_risk_weight * rule_risk + llm_risk_weight * llm_risk)
+                            / (rule_risk_weight + llm_risk_weight)
+                            if has_llm else rule_risk)
+            graph.edges.append(RiskEdge(
+                source=source, target=target, risk=initial_risk,
+                final_risk=initial_risk, rule_risk=rule_risk, llm_risk=llm_risk,
+                observed_risk=0.0, historical_vulnerability=0.0,
+                risk_type=list(dict.fromkeys(rule_types + llm_edge.get("reason_tags", []))),
+                reason=rule_reason or "No reviewed pair-specific prior.",
+                evidence={"rule_risk": rule_risk, "llm_risk": llm_risk,
+                          "observed_risk": 0.0, "historical_vulnerability": 0.0},
+                source_kind="reviewed_rule_llm_prior" if has_llm
+                else "reviewed_rule_prior"))
+    return graph
 
 
 def build_risk_map(state, drift_threshold=0.15, confusion_threshold=0.20,
@@ -96,16 +141,15 @@ def build_risk_map(state, drift_threshold=0.15, confusion_threshold=0.20,
             prior_risk, prior_types, prior_reason = (semantic_memory.rule_risk(source, target)
                                                      if semantic_memory is not None else (0.0, [], ""))
             llm_edge = (qwen_assessment or {}).get((source, target), {})
-            components = [llm_edge.get(name, 0) for name in
-                          ("semantic_overlap", "annotation_conflict", "context_overlap")]
-            llm_risk = 0.05 + 0.95 * (0.30 * components[0] + 0.45 * components[1]
-                                      + 0.25 * components[2]) / 2.0
+            llm_risk = _llm_risk(llm_edge)
             has_llm = bool(llm_edge)
             initial_risk = ((rule_risk_weight * prior_risk + llm_risk_weight * llm_risk)
                             / (rule_risk_weight + llm_risk_weight)) if has_llm else prior_risk
             fused_risk = max(node.score, initial_risk)
             risk_map.edges.append(RiskEdge(
                 source=source, target=target, risk=fused_risk,
+                final_risk=fused_risk, rule_risk=prior_risk, llm_risk=llm_risk,
+                observed_risk=node.score, historical_vulnerability=0.0,
                 risk_type=list(dict.fromkeys(prior_types + llm_edge.get("reason_tags", [])
                                               + list(node.reasons))),
                 evidence=dict(node.evidence, rule_risk=prior_risk, llm_risk=llm_risk,

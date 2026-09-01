@@ -420,6 +420,8 @@ class FeedbackMonitor(object):
             return ""
         summary = dict(self.task_summary)
         summary["metrics"] = dict(metrics or {})
+        if summary["metrics"].get("risk_kd_diagnostics") is not None:
+            summary["risk_kd_diagnostics"] = summary["metrics"]["risk_kd_diagnostics"]
         summary["mean_confidence"] = summary["confidence_sum"] / float(summary["valid_tokens"]) if summary["valid_tokens"] else None
         summary["mean_loss"] = summary["loss_sum"] / float(summary["loss_count"]) if summary["loss_count"] else None
         if self.state is not None:
@@ -483,13 +485,29 @@ class FeedbackMonitor(object):
         self.task_summary["latest_semantic_risk"] = risk_map_dict
         cache_dir = os.path.join(self.output_dir, "semantic_cache", "risk_graph")
         os.makedirs(cache_dir, exist_ok=True)
-        cache_path = os.path.join(cache_dir, "%s_task_%d.json" %
+        cache_path = os.path.join(cache_dir, "%s_task_%d_observed.json" %
                                    (self.state.domain, self.state.task_id))
-        latest_path = os.path.join(cache_dir, "%s_latest.json" % self.state.domain)
+        latest_path = os.path.join(cache_dir, "%s_latest_observed.json" % self.state.domain)
         for destination in (cache_path, latest_path):
             with open(destination, "w", encoding="utf-8") as handle:
                 json.dump(risk_map_dict, handle, ensure_ascii=True, indent=2)
         return risk_map
+
+    def record_task_risk_graph(self, risk_graph):
+        """Persist the frozen task-start graph without overwriting it online."""
+        if not self.enabled or self.task_summary is None:
+            return ""
+        cache_dir = os.path.join(self.output_dir, "semantic_cache", "risk_graph")
+        os.makedirs(cache_dir, exist_ok=True)
+        graph_dict = risk_graph.to_dict()
+        path = os.path.join(cache_dir, "%s_task_%d.json" %
+                            (self.state.domain, self.state.task_id))
+        latest_path = os.path.join(cache_dir, "%s_latest.json" % self.state.domain)
+        for destination in (path, latest_path):
+            with open(destination, "w", encoding="utf-8") as handle:
+                json.dump(graph_dict, handle, ensure_ascii=True, indent=2)
+        self.task_summary["task_start_risk_graph"] = graph_dict
+        return path
 
     def _append_summary_csv(self, metrics):
         """Write a human-readable cumulative experiment table."""

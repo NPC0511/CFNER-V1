@@ -19,6 +19,7 @@ from transformers import AutoTokenizer
 
 from src.dataloader import *
 from src.utils import *
+from src.feedback_agent.risk_kd import label_id_weights, weighted_kl_by_teacher_label
 
 logger = logging.getLogger()
 params = get_params()
@@ -38,6 +39,32 @@ class BaseTrainer(object):
         self.weight_decay = 5e-4
         # Runtime-only multiplier; 1.0 preserves the original RDP objective.
         self.adaptive_distillation_multiplier = 1.0
+        self.risk_kd_label_weights = {}
+        self.risk_kd_policy = {}
+        self.risk_kd_diagnostics = {}
+
+    def set_risk_kd_policy(self, policy, enabled=False):
+        self.risk_kd_policy = policy.to_dict() if policy is not None else {}
+        self.risk_kd_label_weights = (label_id_weights(policy, self.label_list)
+                                      if enabled and policy is not None else {})
+        self.risk_kd_diagnostics = {
+            "enabled": bool(enabled), "label_weights": dict(self.risk_kd_policy.get("label_weights", {})),
+            "target_risks": dict(self.risk_kd_policy.get("target_risks", {})),
+            "token_counts": {}, "unweighted_logits_kd_sum": 0.0,
+            "weighted_logits_kd_sum": 0.0, "batches": 0
+        }
+
+    def get_risk_kd_diagnostics(self):
+        diagnostics = dict(self.risk_kd_diagnostics)
+        batches = diagnostics.get("batches", 0)
+        diagnostics["mean_unweighted_logits_kd"] = (
+            diagnostics.get("unweighted_logits_kd_sum", 0.0) / batches if batches else 0.0)
+        diagnostics["mean_weighted_logits_kd"] = (
+            diagnostics.get("weighted_logits_kd_sum", 0.0) / batches if batches else 0.0)
+        diagnostics["mean_weighted_kd_contribution"] = (
+            float(self.params.distill_logits_weight)
+            * diagnostics["mean_weighted_logits_kd"])
+        return diagnostics
 
     
     def batch_forward(self, inputs):    
@@ -246,7 +273,19 @@ class BaseTrainer(object):
                                 refer_logits[distill_mask]/self.params.ref_temperature, 
                                 dim=-1).view(-1, refer_dims)
 
-            distill_logits_loss = nn.KLDivLoss(reduction='batchmean')(old_logits_score, ref_old_logits_score)
+            teacher_label_ids = ref_old_logits_score.argmax(dim=-1)
+            baseline_kd, weighted_kd, token_weights = weighted_kl_by_teacher_label(
+                old_logits_score, ref_old_logits_score, teacher_label_ids,
+                self.risk_kd_label_weights)
+            distill_logits_loss = weighted_kd
+            diagnostics = self.risk_kd_diagnostics
+            diagnostics["unweighted_logits_kd_sum"] += float(baseline_kd.detach().item())
+            diagnostics["weighted_logits_kd_sum"] += float(weighted_kd.detach().item())
+            diagnostics["batches"] += 1
+            for label_id in teacher_label_ids.detach().cpu().tolist():
+                label_name = self.label_list[int(label_id)]
+                diagnostics["token_counts"][label_name] = (
+                    diagnostics["token_counts"].get(label_name, 0) + 1)
 
 
 

@@ -8,6 +8,7 @@ class QwenRiskAdvisor(object):
     """Generate semantic components; Python owns risk arithmetic and actions."""
 
     COMPONENTS = ("semantic_overlap", "annotation_conflict", "context_overlap")
+    PLACEHOLDER_TAGS = {"tag", "short_reason_tag"}
 
     def __init__(self, output_dir, enabled=False, model_path=None,
                  temperature=0.0, max_new_tokens=512, dtype="float32"):
@@ -53,7 +54,8 @@ class QwenRiskAdvisor(object):
         if os.path.isfile(cache_path):
             with open(cache_path, encoding="utf-8") as handle:
                 cached = json.load(handle)
-            if cached.get("status") == "ok":
+            if cached.get("status") == "ok" and not self._is_template_edge(
+                    cached.get("edge") or {}):
                 return cached
         result = {"source": source, "target": target, "status": "fallback",
                   "edge": None, "raw_output": ""}
@@ -84,8 +86,10 @@ class QwenRiskAdvisor(object):
         relevant_rules = [rule for rule in rules
                           if rule.get("source") == source and rule.get("target") == target]
         schema = {"source": source, "target": target,
-            "semantic_overlap": 0, "annotation_conflict": 0,
-            "context_overlap": 0, "reason_tags": ["short_reason_tag"]}
+            "semantic_overlap": "integer 0, 1, or 2",
+            "annotation_conflict": "integer 0, 1, or 2",
+            "context_overlap": "integer 0, 1, or 2",
+            "reason_tags": ["specific non-placeholder reason tag"]}
         return (
             "You analyze one directed interference-risk edge for continual NER. Return one JSON object only, with no markdown. "
             "Use exactly source=%s and target=%s. Assign integer components 0, 1, or 2. "
@@ -126,7 +130,15 @@ class QwenRiskAdvisor(object):
         if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
             raise ValueError("invalid_reason_tags")
         parsed["reason_tags"] = tags
+        if self._is_template_edge(parsed):
+            raise ValueError("template_rejected")
         return parsed
+
+    def _is_template_edge(self, edge):
+        return (all(edge.get(name) == 0 for name in self.COMPONENTS)
+                and bool(edge.get("reason_tags"))
+                and all(tag in self.PLACEHOLDER_TAGS
+                        for tag in edge.get("reason_tags", [])))
 
     @staticmethod
     def _write(path, result):
