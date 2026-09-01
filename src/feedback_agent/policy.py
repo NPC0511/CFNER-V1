@@ -93,3 +93,32 @@ class AdaptiveDistillationPolicy(ObserveOnlyPolicy):
             record.metrics_after = {"distillation_multiplier": self.multiplier,
                                     "active_until_step": self.active_until}
         return record
+
+
+class RiskGatedDistillationPolicy(AdaptiveDistillationPolicy):
+    """Apply the bounded KD action only to classes selected by a risk map."""
+
+    LEVELS = {"low": 0, "medium": 1, "high": 2}
+
+    def __init__(self, min_risk_level="medium", **kwargs):
+        super().__init__(**kwargs)
+        if min_risk_level not in self.LEVELS:
+            raise ValueError("Invalid minimum risk level: %s" % min_risk_level)
+        self.min_risk_level = min_risk_level
+
+    def update(self, step, drift, risk_map):
+        """Filter drift candidates through the deterministic semantic risk map."""
+        nodes = getattr(risk_map, "nodes", {}) if risk_map is not None else {}
+        minimum = self.LEVELS[self.min_risk_level]
+        eligible = {
+            name: value for name, value in (drift or {}).items()
+            if name in nodes and self.LEVELS.get(nodes[name].level, 0) >= minimum
+        }
+        record = super().update(step, eligible)
+        if record is not None:
+            record.request.trigger_state["risk_controller"] = {
+                "minimum_level": self.min_risk_level,
+                "eligible_targets": sorted(eligible),
+                "risk_nodes": {name: nodes[name].to_dict() for name in eligible},
+            }
+        return record

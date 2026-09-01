@@ -10,7 +10,9 @@ from src.dataloader import *
 from src.trainer import *
 from src.model import *
 from src.config import *
-from src.feedback_agent import AdaptiveDistillationPolicy, ActionRequest, FeedbackMonitor, ObserveOnlyPolicy
+from src.feedback_agent import (AdaptiveDistillationPolicy, ActionRequest,
+                                FeedbackMonitor, ObserveOnlyPolicy,
+                                RiskGatedDistillationPolicy)
 
 import time
 
@@ -112,10 +114,25 @@ def main_cl(params):
         effect_window_steps=getattr(params, "effect_window_steps", 500),
         cooldown_steps=getattr(params, "cooldown_steps", 200)
     )
+    risk_controller_enabled = getattr(params, "risk_controller_enabled", False)
+    risk_policy = RiskGatedDistillationPolicy(
+        min_risk_level=getattr(params, "risk_controller_min_level", "medium"),
+        drift_threshold=getattr(params, "feature_drift_threshold", 0.15),
+        trigger_patience=getattr(params, "trigger_patience", 3),
+        max_action_delta=getattr(params, "max_action_delta", 0.05),
+        max_multiplier=getattr(params, "max_distillation_weight", 1.5),
+        effect_window_steps=getattr(params, "effect_window_steps", 500),
+        cooldown_steps=getattr(params, "cooldown_steps", 200)
+    )
     if feedback_monitor.enabled:
-        if getattr(params, "agent_mode", "observe_only") != "observe_only":
-            raise ValueError("Only agent_mode=observe_only is implemented")
-        logger.info("Feedback monitor enabled in observe-only mode (interval=%d)",
+        agent_mode = getattr(params, "agent_mode", "observe_only")
+        if agent_mode not in ("observe_only", "bounded_control"):
+            raise ValueError("agent_mode must be observe_only or bounded_control")
+        if agent_mode == "bounded_control" and not risk_controller_enabled:
+            raise ValueError("bounded_control requires risk_controller_enabled=true")
+        if risk_controller_enabled and agent_mode != "bounded_control":
+            raise ValueError("risk_controller_enabled requires agent_mode=bounded_control")
+        logger.info("Feedback agent mode=%s (interval=%d)", agent_mode,
                     feedback_monitor.observe_interval_steps)
     trainer.pad_token_id = pad_token_id # 填充token 的id=0
 
@@ -457,6 +474,7 @@ def main_cl(params):
                 drift = feedback_monitor.observe_feature_drift(
                     step=step, feature_model=trainer.model
                 )
+                risk_map = None
                 if iteration > 0 and should_observe:
                     feedback_monitor.observe_teacher_confusion(
                         step=step, labels=monitor_labels,
@@ -471,12 +489,17 @@ def main_cl(params):
                         step=step, feature_model=trainer.model,
                         prototypes=trainer.prototypes)
                     if getattr(params, "semantic_risk_enabled", False):
-                        feedback_monitor.record_semantic_risk(
+                        risk_map = feedback_monitor.record_semantic_risk(
                             drift_threshold=getattr(params, "semantic_risk_drift_threshold", 0.15),
                             confusion_threshold=getattr(params, "semantic_risk_confusion_threshold", 0.20),
                             entropy_threshold=getattr(params, "semantic_risk_entropy_threshold", 1.0),
                             similarity_threshold=getattr(params, "semantic_risk_similarity_threshold", 0.50))
-                if getattr(params, "adaptive_distillation_enabled", False) and drift:
+                if risk_controller_enabled and drift:
+                    action_record = risk_policy.update(step, drift, risk_map)
+                    if action_record is not None:
+                        feedback_monitor.record_action(action_record)
+                        trainer.adaptive_distillation_multiplier = risk_policy.multiplier
+                elif getattr(params, "adaptive_distillation_enabled", False) and drift:
                     action_record = adaptive_policy.update(step, drift)
                     if action_record is not None:
                         feedback_monitor.record_action(action_record)
