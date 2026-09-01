@@ -24,28 +24,46 @@ class QwenRiskAdvisor(object):
         cache_dir = os.path.join(self.output_dir, "semantic_cache", "qwen")
         os.makedirs(cache_dir, exist_ok=True)
         cache_path = os.path.join(cache_dir, "%s_task_%d.json" % (domain, task_id))
-        if os.path.isfile(cache_path):
-            with open(cache_path, encoding="utf-8") as handle:
-                cached = json.load(handle)
-            if cached.get("status") == "ok":
-                return cached
         result = {"task_id": int(task_id), "domain": domain, "enabled": self.enabled,
-                  "status": "disabled", "edges": [], "raw_output": ""}
+                  "status": "disabled", "edges": [], "edge_results": []}
         if not self.enabled:
             return self._write(cache_path, result)
         if not self.model_path or not os.path.isdir(self.model_path):
             result.update(status="fallback", error="qwen_model_path_unavailable")
             return self._write(cache_path, result)
-        raw_output = ""
         try:
             self._load_model()
-            prompt = self._prompt(new_types, old_types, memory)
-            raw_output = self._generate(prompt)
-            parsed = self._parse(raw_output, new_types, old_types)
-            result.update(status="ok", edges=parsed, raw_output=raw_output)
+            for source in new_types:
+                for target in old_types:
+                    edge_result = self._analyze_edge(
+                        cache_dir, domain, task_id, source, target, memory)
+                    result["edge_results"].append(edge_result)
+                    if edge_result.get("status") == "ok":
+                        result["edges"].append(edge_result["edge"])
+            result["status"] = ("ok" if len(result["edges"]) == len(new_types) * len(old_types)
+                                else "partial" if result["edges"] else "fallback")
         except Exception as exc:
             result.update(status="fallback", error="%s: %s" %
-                          (type(exc).__name__, str(exc)), raw_output=raw_output)
+                          (type(exc).__name__, str(exc)))
+        return self._write(cache_path, result)
+
+    def _analyze_edge(self, cache_dir, domain, task_id, source, target, memory):
+        filename = "%s_task_%d_%s_to_%s.json" % (domain, task_id, source, target)
+        cache_path = os.path.join(cache_dir, filename)
+        if os.path.isfile(cache_path):
+            with open(cache_path, encoding="utf-8") as handle:
+                cached = json.load(handle)
+            if cached.get("status") == "ok":
+                return cached
+        result = {"source": source, "target": target, "status": "fallback",
+                  "edge": None, "raw_output": ""}
+        try:
+            raw_output = self._generate(self._edge_prompt(source, target, memory))
+            edge = self._parse_edge(raw_output, source, target)
+            result.update(status="ok", edge=edge, raw_output=raw_output)
+        except Exception as exc:
+            result.update(error="%s: %s" % (type(exc).__name__, str(exc)),
+                          raw_output=locals().get("raw_output", ""))
         return self._write(cache_path, result)
 
     def _load_model(self):
@@ -60,27 +78,19 @@ class QwenRiskAdvisor(object):
         self.model = self.model.cuda() if torch.cuda.is_available() else self.model
         self.model.eval()
 
-    def _prompt(self, new_types, old_types, memory):
+    def _edge_prompt(self, source, target, memory):
         definitions = memory.entity_types.get("entity_types", {}) if memory is not None else {}
         rules = memory.annotation_rules.get("rules", []) if memory is not None else []
         relevant_rules = [rule for rule in rules
-                          if rule.get("source") in new_types and rule.get("target") in old_types]
-        required_edges = [{"source": source, "target": target}
-                          for source in new_types for target in old_types]
-        schema = {"risk_edges": [{
-            "source": "exactly one required source",
-            "target": "exactly one required target",
+                          if rule.get("source") == source and rule.get("target") == target]
+        schema = {"source": source, "target": target,
             "semantic_overlap": 0, "annotation_conflict": 0,
-            "context_overlap": 0, "reason_tags": ["short_reason_tag"]
-        }]}
+            "context_overlap": 0, "reason_tags": ["short_reason_tag"]}
         return (
-            "You analyze directed interference risk for continual NER. Return one JSON object only, with no markdown. "
-            "You MUST emit exactly one risk_edges item for EVERY required pair below; do not omit a pair. "
-            "For every item assign integer components 0, 1, or 2. Do not suggest loss weights or training actions.\n"
-            "Required pairs: %s\n"
-            "New types: %s\nOld types: %s\nDefinitions: %s\nReviewed rules: %s\n"
-            "Required schema: %s" % (json.dumps(required_edges), json.dumps(new_types),
-                                      json.dumps(old_types), json.dumps(definitions),
+            "You analyze one directed interference-risk edge for continual NER. Return one JSON object only, with no markdown. "
+            "Use exactly source=%s and target=%s. Assign integer components 0, 1, or 2. "
+            "Do not suggest loss weights or training actions.\nDefinitions: %s\nReviewed rules: %s\n"
+            "Required schema: %s" % (source, target, json.dumps(definitions),
                                       json.dumps(relevant_rules), json.dumps(schema)))
 
     def _generate(self, prompt):
@@ -99,35 +109,24 @@ class QwenRiskAdvisor(object):
         generated = output[0][inputs["input_ids"].shape[-1]:]
         return self.tokenizer.decode(generated, skip_special_tokens=True).strip()
 
-    def _parse(self, raw_output, new_types, old_types):
+    def _parse_edge(self, raw_output, source, target):
         start, end = raw_output.find("{"), raw_output.rfind("}")
         if start < 0 or end < start:
             raise ValueError("missing_json_object")
         payload = json.loads(raw_output[start:end + 1])
-        raw_edges = payload.get("risk_edges")
-        if not isinstance(raw_edges, list):
-            raise ValueError("risk_edges_not_list")
-        expected = {(source, target) for source in new_types for target in old_types}
-        parsed = {}
-        for edge in raw_edges:
-            source, target = edge.get("source"), edge.get("target")
-            if (source, target) not in expected:
-                continue
-            components = {}
-            for name in self.COMPONENTS:
-                value = edge.get(name)
-                if not isinstance(value, int) or value not in (0, 1, 2):
-                    raise ValueError("invalid_%s" % name)
-                components[name] = value
-            tags = edge.get("reason_tags", [])
-            if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
-                raise ValueError("invalid_reason_tags")
-            parsed[(source, target)] = dict(components, reason_tags=tags)
-        if set(parsed) != expected:
-            missing = sorted(expected - set(parsed))
-            raise ValueError("missing_expected_edges:%s" % missing)
-        return [{"source": source, "target": target, **parsed[(source, target)]}
-                for source, target in sorted(expected)]
+        if payload.get("source") != source or payload.get("target") != target:
+            raise ValueError("unexpected_edge_identity")
+        parsed = {"source": source, "target": target}
+        for name in self.COMPONENTS:
+            value = payload.get(name)
+            if not isinstance(value, int) or value not in (0, 1, 2):
+                raise ValueError("invalid_%s" % name)
+            parsed[name] = value
+        tags = payload.get("reason_tags", [])
+        if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
+            raise ValueError("invalid_reason_tags")
+        parsed["reason_tags"] = tags
+        return parsed
 
     @staticmethod
     def _write(path, result):
