@@ -514,7 +514,7 @@ def main_cl(params):
                             confusion_threshold=getattr(params, "semantic_risk_confusion_threshold", 0.20),
                             entropy_threshold=getattr(params, "semantic_risk_entropy_threshold", 1.0),
                             similarity_threshold=getattr(params, "semantic_risk_similarity_threshold", 0.50))
-                if risk_controller_enabled and drift:
+                if risk_controller_enabled and drift and should_observe:
                     action_record = risk_policy.update(step, drift, risk_map)
                     if action_record is not None:
                         feedback_monitor.record_action(action_record)

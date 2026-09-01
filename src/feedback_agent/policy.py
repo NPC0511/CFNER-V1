@@ -109,10 +109,17 @@ class RiskGatedDistillationPolicy(AdaptiveDistillationPolicy):
     def update(self, step, drift, risk_map):
         """Filter drift candidates through the deterministic semantic risk map."""
         nodes = getattr(risk_map, "nodes", {}) if risk_map is not None else {}
+        edges = getattr(risk_map, "edges", []) if risk_map is not None else []
         minimum = self.LEVELS[self.min_risk_level]
+        edge_targets = {edge.target for edge in edges
+                        if self.LEVELS.get("high" if edge.risk >= 0.60
+                                           else "medium" if edge.risk >= 0.30
+                                           else "low", 0) >= minimum}
         eligible = {
             name: value for name, value in (drift or {}).items()
-            if name in nodes and self.LEVELS.get(nodes[name].level, 0) >= minimum
+            if ((edge_targets and name in edge_targets)
+                or (not edge_targets and name in nodes
+                    and self.LEVELS.get(nodes[name].level, 0) >= minimum))
         }
         record = super().update(step, eligible)
         if record is not None:
@@ -120,5 +127,7 @@ class RiskGatedDistillationPolicy(AdaptiveDistillationPolicy):
                 "minimum_level": self.min_risk_level,
                 "eligible_targets": sorted(eligible),
                 "risk_nodes": {name: nodes[name].to_dict() for name in eligible},
+                "risk_edges": [edge.to_dict() for edge in edges
+                                if edge.target in eligible],
             }
         return record
