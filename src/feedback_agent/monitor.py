@@ -17,7 +17,8 @@ class FeedbackMonitor(object):
                  structured_state_logging_enabled=True,
                  teacher_confusion_enabled=True,
                  pseudo_uncertainty_enabled=True,
-                 prototype_similarity_enabled=True):
+                 prototype_similarity_enabled=True,
+                 gradient_conflict_enabled=True):
         self.output_dir = output_dir
         self.enabled = bool(enabled)
         self.summary_enabled = bool(summary_enabled)
@@ -26,6 +27,7 @@ class FeedbackMonitor(object):
         self.teacher_confusion_enabled = bool(teacher_confusion_enabled)
         self.pseudo_uncertainty_enabled = bool(pseudo_uncertainty_enabled)
         self.prototype_similarity_enabled = bool(prototype_similarity_enabled)
+        self.gradient_conflict_enabled = bool(gradient_conflict_enabled)
         self.observe_interval_steps = max(int(observe_interval_steps), 1)
         self.task_summary = None
         self.task_path = ""
@@ -358,6 +360,38 @@ class FeedbackMonitor(object):
             for entity_type, value in result.items():
                 if entity_type in self.state.old_classes:
                     self.state.old_classes[entity_type].prototype_similarity = value
+        return result
+
+    def observe_gradient_conflict(self, step, new_loss, old_loss, parameters):
+        """Measure conflict between new CE and old distillation gradients."""
+        if (not self.enabled or not self.gradient_conflict_enabled
+                or self.task_summary is None or not self.task_path
+                or int(step) % self.observe_interval_steps
+                or new_loss is None or old_loss is None):
+            return None
+        import torch
+        params = [p for p in parameters if p.requires_grad]
+        if not params or not new_loss.requires_grad or not old_loss.requires_grad:
+            return None
+        new_grads = torch.autograd.grad(new_loss, params, retain_graph=True,
+                                        allow_unused=True)
+        old_grads = torch.autograd.grad(old_loss, params, retain_graph=True,
+                                        allow_unused=True)
+        new_vec = torch.cat([g.detach().reshape(-1).cpu() for g in new_grads if g is not None])
+        old_vec = torch.cat([g.detach().reshape(-1).cpu() for g in old_grads if g is not None])
+        if not new_vec.numel() or not old_vec.numel():
+            return None
+        cosine = torch.nn.functional.cosine_similarity(new_vec[None], old_vec[None]).item()
+        conflict = max(0.0, -float(cosine))
+        result = {"cosine": float(cosine), "conflict": conflict}
+        record = {"timestamp": time.time(), "step": int(step),
+                  "gradient_conflict": result}
+        with open(self.task_path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=True) + "\n")
+        self.task_summary["latest_gradient_conflict"] = result
+        if self.state is not None:
+            self.state.step = int(step)
+            self.state.metrics["gradient_conflict"] = result
         return result
 
     def end_task(self, metrics=None):

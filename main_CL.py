@@ -90,7 +90,9 @@ def main_cl(params):
         pseudo_uncertainty_enabled=getattr(
             params, "pseudo_uncertainty_enabled", True),
         prototype_similarity_enabled=getattr(
-            params, "prototype_similarity_enabled", True)
+            params, "prototype_similarity_enabled", True),
+        gradient_conflict_enabled=getattr(
+            params, "gradient_conflict_enabled", True)
     )
     observe_only_policy = ObserveOnlyPolicy(
         max_action_delta=getattr(params, "max_action_delta", 0.05),
@@ -424,6 +426,10 @@ def main_cl(params):
                         pseudo_labels=trainer.last_pseudo_labels,
                         pseudo_confidence=trainer.last_pseudo_confidence,
                         pseudo_probabilities=trainer.last_pseudo_probabilities)
+                    feedback_monitor.observe_gradient_conflict(
+                        step=step, new_loss=trainer.last_new_loss,
+                        old_loss=trainer.last_old_loss,
+                        parameters=trainer.model.parameters())
                     ce_list.append(ce_loss)
                     distill_list.append(distill_loss)
                 else: #  第一个任务 只有ce loss

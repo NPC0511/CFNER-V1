@@ -59,6 +59,8 @@ class BaseTrainer(object):
         ce_loss = nn.CrossEntropyLoss()(self.logits.view(-1, self.logits.shape[-1]), 
                                 labels.flatten().long()) # bs*seq_len, out_dim 默认自动忽略-100 label （pad、cls、sep、第二子词对应的索引）
         self.loss = ce_loss
+        self.last_new_loss = ce_loss
+        self.last_old_loss = None
         return ce_loss.item() 
 
 
@@ -251,6 +253,8 @@ class BaseTrainer(object):
         distill_loss = self.params.soft_param * loss_soft_label + self.params.regular_param * Regularizer_soft + self.params.distill_logits_weight * self.adaptive_distillation_multiplier * distill_logits_loss
 
         self.loss = ce_loss + distill_loss
+        self.last_new_loss = ce_loss
+        self.last_old_loss = distill_loss
 
         return ce_loss.item(), distill_loss.item()
 
