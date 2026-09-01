@@ -31,6 +31,11 @@ teacher_confusion_enabled: true
 pseudo_uncertainty_enabled: true
 prototype_similarity_enabled: true
 gradient_conflict_enabled: true
+semantic_risk_enabled: true
+semantic_risk_drift_threshold: 0.15
+semantic_risk_confusion_threshold: 0.20
+semantic_risk_entropy_threshold: 1.0
+semantic_risk_similarity_threshold: 0.50
 checkpoint_selection_metric: cumulative_micro_f1
 
 # P4: disabled by default. When enabled, a bounded KD multiplier reacts only

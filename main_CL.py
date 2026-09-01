@@ -430,6 +430,12 @@ def main_cl(params):
                         step=step, new_loss=trainer.last_new_loss,
                         old_loss=trainer.last_old_loss,
                         parameters=trainer.model.parameters())
+                    if getattr(params, "semantic_risk_enabled", False):
+                        feedback_monitor.record_semantic_risk(
+                            drift_threshold=getattr(params, "semantic_risk_drift_threshold", 0.15),
+                            confusion_threshold=getattr(params, "semantic_risk_confusion_threshold", 0.20),
+                            entropy_threshold=getattr(params, "semantic_risk_entropy_threshold", 1.0),
+                            similarity_threshold=getattr(params, "semantic_risk_similarity_threshold", 0.50))
                     ce_list.append(ce_loss)
                     distill_list.append(distill_loss)
                 else: #  第一个任务 只有ce loss

@@ -6,6 +6,7 @@ import os
 import time
 
 from .state import OldClassState, TrainingState
+from .semantic_risk import build_risk_map
 
 
 class FeedbackMonitor(object):
@@ -427,6 +428,22 @@ class FeedbackMonitor(object):
     def get_state(self):
         """Return the latest structured snapshot for controller consumers."""
         return self.state
+
+    def record_semantic_risk(self, drift_threshold=0.15, confusion_threshold=0.20,
+                             entropy_threshold=1.0, similarity_threshold=0.50):
+        """Persist the current rule-based risk map without taking an action."""
+        if (not self.enabled or not self.task_path or self.state is None
+                or not self.task_summary):
+            return None
+        risk_map = build_risk_map(self.state, drift_threshold, confusion_threshold,
+                                  entropy_threshold, similarity_threshold)
+        with open(self.task_path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"timestamp": time.time(),
+                                     "record_type": "semantic_risk",
+                                     "semantic_risk": risk_map.to_dict()},
+                                    ensure_ascii=True) + "\n")
+        self.task_summary["latest_semantic_risk"] = risk_map.to_dict()
+        return risk_map
 
     def _append_summary_csv(self, metrics):
         """Write a human-readable cumulative experiment table."""

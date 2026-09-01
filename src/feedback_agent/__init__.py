@@ -3,6 +3,8 @@
 from .monitor import FeedbackMonitor
 from .policy import AdaptiveDistillationPolicy, ActionRecord, ActionRequest, ObserveOnlyPolicy
 from .state import OldClassState, TaskReflection, TrainingState
+from .semantic_risk import RiskNode, SemanticRiskMap, build_risk_map
 
 __all__ = ["AdaptiveDistillationPolicy", "ActionRecord", "ActionRequest", "FeedbackMonitor", "ObserveOnlyPolicy",
            "OldClassState", "TaskReflection", "TrainingState"]
+__all__ += ["RiskNode", "SemanticRiskMap", "build_risk_map"]
