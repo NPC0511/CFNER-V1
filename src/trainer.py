@@ -188,6 +188,9 @@ class BaseTrainer(object):
         rectified = weights * probs
         rectified = rectified / rectified.sum(-1, keepdim=True)
         pseudo_confidence, pseudo_labels_rec = rectified.max(dim=-1)
+        self.last_pseudo_labels = pseudo_labels_rec.detach()
+        self.last_pseudo_confidence = pseudo_confidence.detach()
+        self.last_pseudo_probabilities = rectified.detach()
 
 
         labels[mask_background] = pseudo_labels_rec[mask_background]

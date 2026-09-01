@@ -15,13 +15,15 @@ class FeedbackMonitor(object):
                  feature_probe_max_tokens=500, summary_enabled=True,
                  prototype_stats_enabled=True,
                  structured_state_logging_enabled=True,
-                 teacher_confusion_enabled=True):
+                 teacher_confusion_enabled=True,
+                 pseudo_uncertainty_enabled=True):
         self.output_dir = output_dir
         self.enabled = bool(enabled)
         self.summary_enabled = bool(summary_enabled)
         self.prototype_stats_enabled = bool(prototype_stats_enabled)
         self.structured_state_logging_enabled = bool(structured_state_logging_enabled)
         self.teacher_confusion_enabled = bool(teacher_confusion_enabled)
+        self.pseudo_uncertainty_enabled = bool(pseudo_uncertainty_enabled)
         self.observe_interval_steps = max(int(observe_interval_steps), 1)
         self.task_summary = None
         self.task_path = ""
@@ -272,6 +274,35 @@ class FeedbackMonitor(object):
             for entity_type, value in result.items():
                 if entity_type in self.state.old_classes:
                     self.state.old_classes[entity_type].teacher_confusion = value
+        return result
+
+    def observe_pseudo_uncertainty(self, step, labels, pseudo_labels,
+                                   pseudo_confidence, pseudo_probabilities):
+        """Record confidence, entropy and coverage for old-class pseudo labels."""
+        if (not self.enabled or not self.pseudo_uncertainty_enabled
+                or self.task_summary is None or not self.task_path):
+            return None
+        import torch
+        labels_cpu = labels.detach().view(-1).cpu()
+        pseudo_cpu = pseudo_labels.detach().view(-1).cpu()
+        confidence_cpu = pseudo_confidence.detach().view(-1).cpu()
+        probs_cpu = pseudo_probabilities.detach().view(-1, pseudo_probabilities.shape[-1]).cpu()
+        entropy = -(probs_cpu.clamp_min(1e-12) * probs_cpu.clamp_min(1e-12).log()).sum(dim=-1)
+        old_mask = (labels_cpu == 0) & (labels_cpu != -100)
+        result = {"mean_confidence": float(confidence_cpu[old_mask].mean().item()) if torch.any(old_mask) else None,
+                  "mean_entropy": float(entropy[old_mask].mean().item()) if torch.any(old_mask) else None,
+                  "coverage": {}}
+        for index, name in enumerate(self.label_list):
+            if index == 0 or not name or name[:2] not in ("B-", "I-", "E-", "S-"):
+                continue
+            result["coverage"][name] = int(((pseudo_cpu == index) & old_mask).sum().item())
+        record = {"timestamp": time.time(), "step": int(step), "pseudo_uncertainty": result}
+        with open(self.task_path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=True) + "\n")
+        self.task_summary["latest_pseudo_uncertainty"] = result
+        if self.state is not None:
+            self.state.step = int(step)
+            self.state.metrics["pseudo_uncertainty"] = result
         return result
 
     def end_task(self, metrics=None):

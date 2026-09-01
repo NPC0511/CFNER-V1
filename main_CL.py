@@ -86,7 +86,9 @@ def main_cl(params):
         structured_state_logging_enabled=getattr(
             params, "structured_state_logging_enabled", True),
         teacher_confusion_enabled=getattr(
-            params, "teacher_confusion_enabled", True)
+            params, "teacher_confusion_enabled", True),
+        pseudo_uncertainty_enabled=getattr(
+            params, "pseudo_uncertainty_enabled", True)
     )
     observe_only_policy = ObserveOnlyPolicy(
         max_action_delta=getattr(params, "max_action_delta", 0.05),
@@ -415,6 +417,11 @@ def main_cl(params):
                         step=step, labels=monitor_labels,
                         teacher_logits=trainer.last_refer_logits,
                         old_types=old_entity_list, new_types=new_entity_list)
+                    feedback_monitor.observe_pseudo_uncertainty(
+                        step=step, labels=monitor_labels,
+                        pseudo_labels=trainer.last_pseudo_labels,
+                        pseudo_confidence=trainer.last_pseudo_confidence,
+                        pseudo_probabilities=trainer.last_pseudo_probabilities)
                     ce_list.append(ce_loss)
                     distill_list.append(distill_loss)
                 else: #  第一个任务 只有ce loss
