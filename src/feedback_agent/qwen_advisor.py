@@ -26,7 +26,9 @@ class QwenRiskAdvisor(object):
         cache_path = os.path.join(cache_dir, "%s_task_%d.json" % (domain, task_id))
         if os.path.isfile(cache_path):
             with open(cache_path, encoding="utf-8") as handle:
-                return json.load(handle)
+                cached = json.load(handle)
+            if cached.get("status") == "ok":
+                return cached
         result = {"task_id": int(task_id), "domain": domain, "enabled": self.enabled,
                   "status": "disabled", "edges": [], "raw_output": ""}
         if not self.enabled:
@@ -34,6 +36,7 @@ class QwenRiskAdvisor(object):
         if not self.model_path or not os.path.isdir(self.model_path):
             result.update(status="fallback", error="qwen_model_path_unavailable")
             return self._write(cache_path, result)
+        raw_output = ""
         try:
             self._load_model()
             prompt = self._prompt(new_types, old_types, memory)
@@ -42,7 +45,7 @@ class QwenRiskAdvisor(object):
             result.update(status="ok", edges=parsed, raw_output=raw_output)
         except Exception as exc:
             result.update(status="fallback", error="%s: %s" %
-                          (type(exc).__name__, str(exc)), raw_output="")
+                          (type(exc).__name__, str(exc)), raw_output=raw_output)
         return self._write(cache_path, result)
 
     def _load_model(self):
@@ -62,21 +65,23 @@ class QwenRiskAdvisor(object):
         rules = memory.annotation_rules.get("rules", []) if memory is not None else []
         relevant_rules = [rule for rule in rules
                           if rule.get("source") in new_types and rule.get("target") in old_types]
-        schema = {
-            "risk_edges": [{
-                "source": "new_type", "target": "old_type",
-                "semantic_overlap": 0, "annotation_conflict": 0,
-                "context_overlap": 0, "reason_tags": ["tag"]
-            }]
-        }
+        required_edges = [{"source": source, "target": target}
+                          for source in new_types for target in old_types]
+        schema = {"risk_edges": [{
+            "source": "exactly one required source",
+            "target": "exactly one required target",
+            "semantic_overlap": 0, "annotation_conflict": 0,
+            "context_overlap": 0, "reason_tags": ["short_reason_tag"]
+        }]}
         return (
-            "You analyze directed interference risk for continual NER. Return JSON only. "
-            "For every requested new-to-old pair, assign integer components 0, 1, or 2. "
-            "Do not suggest loss weights or training actions.\n"
+            "You analyze directed interference risk for continual NER. Return one JSON object only, with no markdown. "
+            "You MUST emit exactly one risk_edges item for EVERY required pair below; do not omit a pair. "
+            "For every item assign integer components 0, 1, or 2. Do not suggest loss weights or training actions.\n"
+            "Required pairs: %s\n"
             "New types: %s\nOld types: %s\nDefinitions: %s\nReviewed rules: %s\n"
-            "Required schema: %s" % (json.dumps(new_types), json.dumps(old_types),
-                                      json.dumps(definitions), json.dumps(relevant_rules),
-                                      json.dumps(schema)))
+            "Required schema: %s" % (json.dumps(required_edges), json.dumps(new_types),
+                                      json.dumps(old_types), json.dumps(definitions),
+                                      json.dumps(relevant_rules), json.dumps(schema)))
 
     def _generate(self, prompt):
         import torch
@@ -119,7 +124,8 @@ class QwenRiskAdvisor(object):
                 raise ValueError("invalid_reason_tags")
             parsed[(source, target)] = dict(components, reason_tags=tags)
         if set(parsed) != expected:
-            raise ValueError("missing_expected_edges")
+            missing = sorted(expected - set(parsed))
+            raise ValueError("missing_expected_edges:%s" % missing)
         return [{"source": source, "target": target, **parsed[(source, target)]}
                 for source, target in sorted(expected)]
 

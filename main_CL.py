@@ -284,6 +284,11 @@ def main_cl(params):
             logger.info("Qwen semantic advisor task %d status=%s, edges=%d",
                         iteration, qwen_result.get("status"),
                         len(feedback_monitor.qwen_assessment))
+            if qwen_result.get("status") == "fallback":
+                logger.warning("Qwen fallback task %d: %s",
+                               iteration, qwen_result.get("error", "unknown_error"))
+                logger.warning("Qwen raw output task %d: %s", iteration,
+                               qwen_result.get("raw_output", "")[:4000])
         # Establish the no-action control record for later paired experiments.
         if getattr(params, "action_logging_enabled", False):
             feedback_monitor.record_action(observe_only_policy.validate(ActionRequest(
