@@ -1,7 +1,8 @@
 """Bounded action specifications for later Feedback-RDP interventions."""
 
-from dataclasses import asdict, dataclass, field
 from typing import Dict, List
+
+from .state import ActionRecord, ActionRequest, TrainingState
 
 
 ALLOWED_ACTIONS = {
@@ -10,34 +11,6 @@ ALLOWED_ACTIONS = {
     "increase_prototype_anchor",
     "reduce_pseudo_label_weight",
 }
-
-
-@dataclass
-class ActionRequest:
-    """A proposed single action; it has no authority to change training itself."""
-
-    action: str
-    step: int
-    targets: List[str] = field(default_factory=list)
-    delta: float = 0.0
-    duration_steps: int = 0
-    cooldown_steps: int = 0
-    trigger_state: Dict[str, object] = field(default_factory=dict)
-
-
-@dataclass
-class ActionRecord:
-    """Auditable outcome record for an action/no-action experimental window."""
-
-    request: ActionRequest
-    accepted: bool
-    reason: str
-    metrics_before: Dict[str, object] = field(default_factory=dict)
-    metrics_after: Dict[str, object] = field(default_factory=dict)
-    rollback: bool = False
-
-    def to_dict(self):
-        return asdict(self)
 
 
 class ObserveOnlyPolicy(object):
@@ -58,6 +31,13 @@ class ObserveOnlyPolicy(object):
             request, True, "observe_only_no_training_mutation",
             metrics_before=dict(request.trigger_state)
         )
+
+    def diagnose(self, state: TrainingState) -> ActionRequest:
+        """Create a deterministic proposal without mutating training state."""
+        targets = sorted(name for name, item in state.old_classes.items()
+                         if item.f1_drop > 0 or item.feature_drift > 0)
+        return ActionRequest("no_action", state.step, targets=targets,
+                             trigger_state=state.to_dict())
 
 
 class AdaptiveDistillationPolicy(ObserveOnlyPolicy):

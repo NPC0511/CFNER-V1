@@ -82,7 +82,9 @@ def main_cl(params):
         observe_interval_steps=getattr(params, "observe_interval_steps", 200),
         feature_probe_max_tokens=getattr(params, "feature_probe_max_tokens", 500),
         summary_enabled=getattr(params, "summary_csv_enabled", True),
-        prototype_stats_enabled=getattr(params, "prototype_stats_enabled", True)
+        prototype_stats_enabled=getattr(params, "prototype_stats_enabled", True),
+        structured_state_logging_enabled=getattr(
+            params, "structured_state_logging_enabled", True)
     )
     observe_only_policy = ObserveOnlyPolicy(
         max_action_delta=getattr(params, "max_action_delta", 0.05),

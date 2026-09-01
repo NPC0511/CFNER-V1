@@ -26,6 +26,7 @@ cooldown_steps: 200
 # No setting here changes a loss weight or model parameter.
 action_logging_enabled: true
 summary_csv_enabled: true
+structured_state_logging_enabled: true
 checkpoint_selection_metric: cumulative_micro_f1
 
 # P4: disabled by default. When enabled, a bounded KD multiplier reacts only

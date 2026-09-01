@@ -5,17 +5,21 @@ import csv
 import os
 import time
 
+from .state import OldClassState, TrainingState
+
 
 class FeedbackMonitor(object):
     """Collect small CPU summaries without changing training state."""
 
     def __init__(self, output_dir, enabled=False, observe_interval_steps=200,
                  feature_probe_max_tokens=500, summary_enabled=True,
-                 prototype_stats_enabled=True):
+                 prototype_stats_enabled=True,
+                 structured_state_logging_enabled=True):
         self.output_dir = output_dir
         self.enabled = bool(enabled)
         self.summary_enabled = bool(summary_enabled)
         self.prototype_stats_enabled = bool(prototype_stats_enabled)
+        self.structured_state_logging_enabled = bool(structured_state_logging_enabled)
         self.observe_interval_steps = max(int(observe_interval_steps), 1)
         self.task_summary = None
         self.task_path = ""
@@ -24,6 +28,7 @@ class FeedbackMonitor(object):
         self.feature_reference_means = {}
         self.summary_csv_path = ""
         self.entity_types = []
+        self.state = None
 
     def begin_task(self, task_id, domain, new_types, old_types, label_list):
         if not self.enabled and not self.summary_enabled:
@@ -45,6 +50,10 @@ class FeedbackMonitor(object):
             "loss_sum": 0.0, "loss_count": 0,
             "feature_probe_tokens": 0, "feature_drift_observations": 0
         }
+        self.state = TrainingState(
+            task_id=int(task_id), domain=str(domain), new_types=list(new_types),
+            old_types=list(old_types), seen_types=list(old_types) + list(new_types),
+            old_classes={name: OldClassState(name) for name in old_types})
         if self.task_path:
             with open(self.task_path, "w", encoding="utf-8"):
                 pass
@@ -167,6 +176,12 @@ class FeedbackMonitor(object):
             handle.write(json.dumps(record, ensure_ascii=True) + "\n")
         self.task_summary["feature_drift_observations"] += 1
         self.task_summary["latest_feature_drift"] = drift
+        if self.state is not None:
+            self.state.step = int(step)
+            self.state.metrics["feature_drift"] = dict(drift)
+            for entity_type, value in drift.items():
+                if entity_type in self.state.old_classes:
+                    self.state.old_classes[entity_type].feature_drift = float(value)
         return drift
 
     def observe_batch(self, step, labels, logits, total_loss=None):
@@ -199,6 +214,13 @@ class FeedbackMonitor(object):
         with open(self.task_path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=True) + "\n")
         summary = self.task_summary
+        if self.state is not None:
+            self.state.step = int(step)
+            self.state.observation_index += 1
+            self.state.metrics.update({
+                "mean_confidence": record["mean_confidence"],
+                "total_loss": record["total_loss"],
+                "valid_tokens": record["valid_tokens"]})
         summary["observations"] += 1
         summary["valid_tokens"] += record["valid_tokens"]
         summary["non_o_tokens"] += record["non_o_tokens"]
@@ -216,6 +238,8 @@ class FeedbackMonitor(object):
         summary["metrics"] = dict(metrics or {})
         summary["mean_confidence"] = summary["confidence_sum"] / float(summary["valid_tokens"]) if summary["valid_tokens"] else None
         summary["mean_loss"] = summary["loss_sum"] / float(summary["loss_count"]) if summary["loss_count"] else None
+        if self.state is not None and self.structured_state_logging_enabled:
+            summary["state"] = self.state.to_dict()
         for key in ("confidence_sum", "loss_sum", "loss_count"):
             summary.pop(key, None)
         path = self.task_path[:-6] + "summary.json"
@@ -226,6 +250,10 @@ class FeedbackMonitor(object):
             self._append_summary_csv(summary["metrics"])
         self.task_summary = None
         return path if self.task_path else self.summary_csv_path
+
+    def get_state(self):
+        """Return the latest structured snapshot for controller consumers."""
+        return self.state
 
     def _append_summary_csv(self, metrics):
         """Write a human-readable cumulative experiment table."""
