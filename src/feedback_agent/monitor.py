@@ -48,6 +48,8 @@ class FeedbackMonitor(object):
             os.makedirs(task_dir, exist_ok=True)
             self.task_path = os.path.join(task_dir, "%s_task_%d.jsonl" % (domain, int(task_id)))
         self.label_list = list(label_list)
+        self.old_types = list(old_types)
+        self.new_types = list(new_types)
         self.entity_types = sorted({name[2:] for name in self.label_list
                                     if len(name) > 2 and name[:2] in ("B-", "I-", "E-", "S-")})
         self.summary_csv_path = os.path.join(self.output_dir, "summary.csv")
