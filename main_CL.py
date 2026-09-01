@@ -268,6 +268,11 @@ def main_cl(params):
                                                             select_entity_list=[],
                                                             phase=['dev','test'],
                                                             is_filter_O=False)
+        dataloader_dev_old = None
+        if iteration > 0:
+            dataloader_dev_old = ner_dataloader.get_dataloader(
+                first_N_classes=len(old_entity_list), select_entity_list=[],
+                phase=['dev'], is_filter_O=False)[0]
 
 
         if iteration==0: # 第一个任务
@@ -381,6 +386,18 @@ def main_cl(params):
                 dataloader=dataloader_dev_cumul, reference_model=trainer.refer_model,
                 old_types=old_entity_list
             )
+            current_model = trainer.model
+            trainer.model = trainer.refer_model
+            try:
+                _, _, f1_before = trainer.evaluate(
+                    dataloader_dev_old, each_class=True,
+                    entity_order=old_entity_list)
+            finally:
+                trainer.model = current_model
+            logger.info("Old-class dev F1 before task %d: %s",
+                        iteration, str(f1_before))
+        else:
+            f1_before = {}
 
         for e in range(1, training_epochs+1):
 
@@ -417,25 +434,12 @@ def main_cl(params):
                 monitor_labels = y.clone()
                 if iteration>0:
                     ce_loss, distill_loss = trainer.batch_loss_rdp(y)
-                    feedback_monitor.observe_teacher_confusion(
-                        step=step, labels=monitor_labels,
-                        teacher_logits=trainer.last_refer_logits,
-                        old_types=old_entity_list, new_types=new_entity_list)
-                    feedback_monitor.observe_pseudo_uncertainty(
-                        step=step, labels=monitor_labels,
-                        pseudo_labels=trainer.last_pseudo_labels,
-                        pseudo_confidence=trainer.last_pseudo_confidence,
-                        pseudo_probabilities=trainer.last_pseudo_probabilities)
-                    feedback_monitor.observe_gradient_conflict(
-                        step=step, new_loss=trainer.last_new_loss,
-                        old_loss=trainer.last_old_loss,
-                        parameters=trainer.model.parameters())
-                    if getattr(params, "semantic_risk_enabled", False):
-                        feedback_monitor.record_semantic_risk(
-                            drift_threshold=getattr(params, "semantic_risk_drift_threshold", 0.15),
-                            confusion_threshold=getattr(params, "semantic_risk_confusion_threshold", 0.20),
-                            entropy_threshold=getattr(params, "semantic_risk_entropy_threshold", 1.0),
-                            similarity_threshold=getattr(params, "semantic_risk_similarity_threshold", 0.50))
+                    should_observe = (step % feedback_monitor.observe_interval_steps == 0)
+                    if should_observe:
+                        feedback_monitor.observe_gradient_conflict(
+                            step=step, new_loss=trainer.last_new_loss,
+                            old_loss=trainer.last_old_loss,
+                            parameters=trainer.model.parameters())
                     ce_list.append(ce_loss)
                     distill_list.append(distill_loss)
                 else: #  第一个任务 只有ce loss
@@ -450,10 +454,25 @@ def main_cl(params):
                 drift = feedback_monitor.observe_feature_drift(
                     step=step, feature_model=trainer.model
                 )
-                if iteration > 0 and step % feedback_monitor.observe_interval_steps == 0:
+                if iteration > 0 and should_observe:
+                    feedback_monitor.observe_teacher_confusion(
+                        step=step, labels=monitor_labels,
+                        teacher_logits=trainer.last_refer_logits,
+                        old_types=old_entity_list, new_types=new_entity_list)
+                    feedback_monitor.observe_pseudo_uncertainty(
+                        step=step, labels=monitor_labels,
+                        pseudo_labels=trainer.last_pseudo_labels,
+                        pseudo_confidence=trainer.last_pseudo_confidence,
+                        pseudo_probabilities=trainer.last_pseudo_probabilities)
                     feedback_monitor.observe_prototype_similarity(
                         step=step, feature_model=trainer.model,
                         prototypes=trainer.prototypes)
+                    if getattr(params, "semantic_risk_enabled", False):
+                        feedback_monitor.record_semantic_risk(
+                            drift_threshold=getattr(params, "semantic_risk_drift_threshold", 0.15),
+                            confusion_threshold=getattr(params, "semantic_risk_confusion_threshold", 0.20),
+                            entropy_threshold=getattr(params, "semantic_risk_entropy_threshold", 1.0),
+                            similarity_threshold=getattr(params, "semantic_risk_similarity_threshold", 0.50))
                 if getattr(params, "adaptive_distillation_enabled", False) and drift:
                     action_record = adaptive_policy.update(step, drift)
                     if action_record is not None:
@@ -640,6 +659,7 @@ def main_cl(params):
             "test_micro_f1": float(f1_test_cumul),
             "test_macro_f1": float(ma_f1_test_cumul),
             "per_class_f1": f1_test_each_class_cumul,
+            "f1_before": f1_before,
             "new_class_average_f1": mean_f1(new_entity_list),
             "old_class_average_f1": mean_f1(old_entity_list),
             "seen_class_average_f1": mean_f1(all_seen_entity_list),
