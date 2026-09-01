@@ -24,7 +24,9 @@ class FeedbackMonitor(object):
                  prototype_similarity_enabled=True,
                  gradient_conflict_enabled=True, reflection_enabled=True,
                  reflection_forgetting_threshold=1.0,
-                 semantic_memory_root=None, semantic_memory_dataset=None):
+                 semantic_memory_root=None, semantic_memory_dataset=None,
+                 qwen_assessment=None, rule_risk_weight=0.6,
+                 llm_risk_weight=0.4):
         self.output_dir = output_dir
         self.enabled = bool(enabled)
         self.summary_enabled = bool(summary_enabled)
@@ -39,6 +41,9 @@ class FeedbackMonitor(object):
             forgetting_threshold=reflection_forgetting_threshold)
         self.semantic_memory = (SemanticMemory(semantic_memory_root, semantic_memory_dataset)
                                 if semantic_memory_root and semantic_memory_dataset else None)
+        self.qwen_assessment = dict(qwen_assessment or {})
+        self.rule_risk_weight = float(rule_risk_weight)
+        self.llm_risk_weight = float(llm_risk_weight)
         self.observe_interval_steps = max(int(observe_interval_steps), 1)
         self.task_summary = None
         self.task_path = ""
@@ -459,7 +464,10 @@ class FeedbackMonitor(object):
             return None
         risk_map = build_risk_map(self.state, drift_threshold, confusion_threshold,
                                   entropy_threshold, similarity_threshold,
-                                  semantic_memory=self.semantic_memory)
+                                  semantic_memory=self.semantic_memory,
+                                  qwen_assessment=self.qwen_assessment,
+                                  rule_risk_weight=self.rule_risk_weight,
+                                  llm_risk_weight=self.llm_risk_weight)
         risk_map_dict = risk_map.to_dict()
         risk_map_dict["config_fingerprint"] = hashlib.sha1(
             json.dumps({"drift_threshold": drift_threshold,

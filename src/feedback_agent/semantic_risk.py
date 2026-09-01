@@ -54,7 +54,8 @@ class SemanticRiskMap:
 def build_risk_map(state, drift_threshold=0.15, confusion_threshold=0.20,
                    entropy_threshold=1.0, similarity_threshold=0.50,
                    high_score=0.60, medium_score=0.30,
-                   semantic_memory=None):
+                   semantic_memory=None, qwen_assessment=None,
+                   rule_risk_weight=0.6, llm_risk_weight=0.4):
     """Build a bounded [0, 1] risk score from current monitor evidence."""
     risk_map = SemanticRiskMap(task_id=state.task_id, step=state.step)
     for entity_type, item in state.old_classes.items():
@@ -94,13 +95,24 @@ def build_risk_map(state, drift_threshold=0.15, confusion_threshold=0.20,
             node = risk_map.nodes.get(target, RiskNode(target))
             prior_risk, prior_types, prior_reason = (semantic_memory.rule_risk(source, target)
                                                      if semantic_memory is not None else (0.0, [], ""))
-            fused_risk = max(node.score, prior_risk)
+            llm_edge = (qwen_assessment or {}).get((source, target), {})
+            components = [llm_edge.get(name, 0) for name in
+                          ("semantic_overlap", "annotation_conflict", "context_overlap")]
+            llm_risk = 0.05 + 0.95 * (0.30 * components[0] + 0.45 * components[1]
+                                      + 0.25 * components[2]) / 2.0
+            has_llm = bool(llm_edge)
+            initial_risk = ((rule_risk_weight * prior_risk + llm_risk_weight * llm_risk)
+                            / (rule_risk_weight + llm_risk_weight)) if has_llm else prior_risk
+            fused_risk = max(node.score, initial_risk)
             risk_map.edges.append(RiskEdge(
                 source=source, target=target, risk=fused_risk,
-                risk_type=list(dict.fromkeys(prior_types + list(node.reasons))),
-                evidence=dict(node.evidence, rule_risk=prior_risk),
+                risk_type=list(dict.fromkeys(prior_types + llm_edge.get("reason_tags", [])
+                                              + list(node.reasons))),
+                evidence=dict(node.evidence, rule_risk=prior_risk, llm_risk=llm_risk,
+                              initial_risk=initial_risk),
                 reason=prior_reason or ("Observed evidence for old target %s; source-specific "
                                         "semantic prior is not configured." % target),
-                source_kind="reviewed_rule_plus_observed_evidence" if semantic_memory
+                source_kind="reviewed_rule_llm_plus_observed_evidence" if has_llm
+                else "reviewed_rule_plus_observed_evidence" if semantic_memory
                 else "observed_training_evidence"))
     return risk_map

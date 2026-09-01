@@ -12,7 +12,7 @@ from src.model import *
 from src.config import *
 from src.feedback_agent import (AdaptiveDistillationPolicy, ActionRequest,
                                 FeedbackMonitor, ObserveOnlyPolicy,
-                                RiskGatedDistillationPolicy)
+                                RiskGatedDistillationPolicy, QwenRiskAdvisor)
 
 import time
 
@@ -99,8 +99,16 @@ def main_cl(params):
         reflection_forgetting_threshold=getattr(
             params, "reflection_forgetting_threshold", 1.0),
         semantic_memory_root=getattr(params, "semantic_memory_root", None),
-        semantic_memory_dataset=getattr(params, "semantic_memory_dataset", None)
+        semantic_memory_dataset=getattr(params, "semantic_memory_dataset", None),
+        rule_risk_weight=getattr(params, "rule_risk_weight", 0.6),
+        llm_risk_weight=getattr(params, "llm_risk_weight", 0.4)
     )
+    qwen_advisor = QwenRiskAdvisor(
+        output_dir=params.dump_path, enabled=getattr(params, "qwen_enabled", False),
+        model_path=getattr(params, "qwen_model_path", None),
+        temperature=getattr(params, "qwen_temperature", 0.0),
+        max_new_tokens=getattr(params, "qwen_max_new_tokens", 512),
+        dtype=getattr(params, "qwen_dtype", "float32"))
     observe_only_policy = ObserveOnlyPolicy(
         max_action_delta=getattr(params, "max_action_delta", 0.05),
         cooldown_steps=getattr(params, "cooldown_steps", 200)
@@ -266,6 +274,16 @@ def main_cl(params):
             task_id=iteration, domain=domain_name, new_types=new_entity_list,
             old_types=old_entity_list, label_list=label_list
         )
+        if iteration > 0:
+            qwen_result = qwen_advisor.analyze_task(
+                iteration, domain_name, new_entity_list, old_entity_list,
+                feedback_monitor.semantic_memory)
+            feedback_monitor.qwen_assessment = {
+                (edge["source"], edge["target"]): edge
+                for edge in qwen_result.get("edges", [])}
+            logger.info("Qwen semantic advisor task %d status=%s, edges=%d",
+                        iteration, qwen_result.get("status"),
+                        len(feedback_monitor.qwen_assessment))
         # Establish the no-action control record for later paired experiments.
         if getattr(params, "action_logging_enabled", False):
             feedback_monitor.record_action(observe_only_policy.validate(ActionRequest(
