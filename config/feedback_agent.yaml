@@ -1,7 +1,9 @@
 # Server-side settings for the Feedback-RDP Agent.
 # Keep the Qwen checkpoint outside the repository.
-agent_enabled: false
-agent_mode: observe_only
+agent_enabled: true
+agent_mode: bounded_control
+risk_controller_enabled: true
+risk_controller_min_level: medium
 qwen_enabled: false
 qwen_model_path: /root/autodl-tmp/models/Qwen2.5-1.5B-Instruct
 qwen_temperature: 0.0
@@ -36,11 +38,11 @@ semantic_risk_drift_threshold: 0.15
 semantic_risk_confusion_threshold: 0.20
 semantic_risk_entropy_threshold: 1.0
 semantic_risk_similarity_threshold: 0.50
-checkpoint_selection_metric: cumulative_micro_f1
+checkpoint_selection_metric: cumulative_macro_f1
 
 # P4: disabled by default. When enabled, a bounded KD multiplier reacts only
 # to repeated P2 feature-drift observations and is automatically rolled back.
-adaptive_distillation_enabled: false
+adaptive_distillation_enabled: true
 feature_drift_threshold: 0.15
 
 # P5: disabled by default for clean ablations against the hard-label RDP path.
