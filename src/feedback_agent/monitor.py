@@ -292,10 +292,14 @@ class FeedbackMonitor(object):
         result = {"mean_confidence": float(confidence_cpu[old_mask].mean().item()) if torch.any(old_mask) else None,
                   "mean_entropy": float(entropy[old_mask].mean().item()) if torch.any(old_mask) else None,
                   "coverage": {}}
+        candidate_count = int(old_mask.sum().item())
         for index, name in enumerate(self.label_list):
             if index == 0 or not name or name[:2] not in ("B-", "I-", "E-", "S-"):
                 continue
-            result["coverage"][name] = int(((pseudo_cpu == index) & old_mask).sum().item())
+            count = int(((pseudo_cpu == index) & old_mask).sum().item())
+            result["coverage"][name] = {"count": count,
+                                         "ratio": (float(count) / candidate_count)
+                                         if candidate_count else None}
         record = {"timestamp": time.time(), "step": int(step), "pseudo_uncertainty": result}
         with open(self.task_path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=True) + "\n")
@@ -312,6 +316,16 @@ class FeedbackMonitor(object):
         summary["metrics"] = dict(metrics or {})
         summary["mean_confidence"] = summary["confidence_sum"] / float(summary["valid_tokens"]) if summary["valid_tokens"] else None
         summary["mean_loss"] = summary["loss_sum"] / float(summary["loss_count"]) if summary["loss_count"] else None
+        if self.state is not None:
+            per_class_f1 = dict((metrics or {}).get("per_class_f1", {}))
+            f1_before = dict((metrics or {}).get("f1_before", {}))
+            for entity_type, item in self.state.old_classes.items():
+                if entity_type in per_class_f1:
+                    item.f1_current = float(per_class_f1[entity_type])
+                if entity_type in f1_before:
+                    item.f1_before = float(f1_before[entity_type])
+                    if item.f1_current is not None:
+                        item.f1_drop = item.f1_before - item.f1_current
         if self.state is not None and self.structured_state_logging_enabled:
             summary["state"] = self.state.to_dict()
         for key in ("confidence_sum", "loss_sum", "loss_count"):
