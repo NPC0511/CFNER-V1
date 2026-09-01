@@ -1,0 +1,54 @@
+{
+  "version": "human-reviewed-v1",
+  "dataset": "conll2003",
+  "rules": [
+    {
+      "source": "organisation",
+      "target": "location",
+      "weight": 1.7,
+      "risk_type": ["boundary_confusion", "name_overlap", "context_overlap"],
+      "reason": "Organization names can contain place names, and sports teams or institutions can be named after places.",
+      "evidence_id": "conll_org_loc_001"
+    },
+    {
+      "source": "organisation",
+      "target": "person",
+      "weight": 1.5,
+      "risk_type": ["context_overlap", "boundary_confusion"],
+      "reason": "People and organizations frequently occur in the same news contexts and may share name-like spans.",
+      "evidence_id": "conll_org_person_001"
+    },
+    {
+      "source": "person",
+      "target": "organisation",
+      "weight": 1.4,
+      "risk_type": ["name_overlap", "context_overlap"],
+      "reason": "Person names can resemble organization names, especially in headlines and affiliation contexts.",
+      "evidence_id": "conll_person_org_001"
+    },
+    {
+      "source": "person",
+      "target": "location",
+      "weight": 1.2,
+      "risk_type": ["name_overlap", "context_overlap"],
+      "reason": "Some person and place names share surface forms and occur in overlapping context patterns.",
+      "evidence_id": "conll_person_loc_001"
+    },
+    {
+      "source": "misc",
+      "target": "organisation",
+      "weight": 1.2,
+      "risk_type": ["annotation_conflict", "context_overlap"],
+      "reason": "Products, events, and other miscellaneous names can appear in organization-like contexts.",
+      "evidence_id": "conll_misc_org_001"
+    },
+    {
+      "source": "misc",
+      "target": "location",
+      "weight": 1.1,
+      "risk_type": ["annotation_conflict", "context_overlap"],
+      "reason": "Events, artifacts, and other miscellaneous names can contain or resemble geographic names.",
+      "evidence_id": "conll_misc_loc_001"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "version": "human-reviewed-v1",
+  "dataset": "conll2003",
+  "entity_types": {
+    "person": {
+      "definition": "A named individual person.",
+      "positive_cues": ["personal names", "honorific plus a name"],
+      "negative_cues": ["organization names", "locations used as places"]
+    },
+    "location": {
+      "definition": "A named geographic or geopolitical place.",
+      "positive_cues": ["cities", "countries", "regions", "geographic sites"],
+      "negative_cues": ["organization names", "person names"]
+    },
+    "organisation": {
+      "definition": "A named company, institution, agency, political group, sports team, or other organization.",
+      "positive_cues": ["companies", "institutions", "agencies", "teams"],
+      "negative_cues": ["bare locations", "individual persons"]
+    },
+    "misc": {
+      "definition": "A named entity that is not person, location, or organisation under the CoNLL2003 annotation scheme.",
+      "positive_cues": ["nationalities", "events", "artifacts", "products", "other named categories"],
+      "negative_cues": ["ordinary unmarked text", "entities assigned to the other three types"]
+    }
+  }
+}

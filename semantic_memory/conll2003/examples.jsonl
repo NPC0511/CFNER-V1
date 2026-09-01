@@ -1,0 +1,4 @@
+{"entity_type":"person","text":"person-name in a news report","labeling_note":"Annotate the named individual as person."}
+{"entity_type":"location","text":"place-name in a geographic context","labeling_note":"Annotate the named place as location."}
+{"entity_type":"organisation","text":"company-or-team-name in an affiliation context","labeling_note":"Annotate the named organization as organisation."}
+{"entity_type":"misc","text":"event-or-product-name outside the other three types","labeling_note":"Annotate according to the CoNLL2003 misc category."}

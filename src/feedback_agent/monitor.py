@@ -9,6 +9,7 @@ import hashlib
 from .state import OldClassState, TrainingState
 from .semantic_risk import build_risk_map
 from .reflection import ReflectionMemory
+from .semantic_memory import SemanticMemory
 
 
 class FeedbackMonitor(object):
@@ -22,7 +23,8 @@ class FeedbackMonitor(object):
                  pseudo_uncertainty_enabled=True,
                  prototype_similarity_enabled=True,
                  gradient_conflict_enabled=True, reflection_enabled=True,
-                 reflection_forgetting_threshold=1.0):
+                 reflection_forgetting_threshold=1.0,
+                 semantic_memory_root=None, semantic_memory_dataset=None):
         self.output_dir = output_dir
         self.enabled = bool(enabled)
         self.summary_enabled = bool(summary_enabled)
@@ -35,6 +37,8 @@ class FeedbackMonitor(object):
         self.reflection_memory = ReflectionMemory(
             output_dir, enabled=reflection_enabled,
             forgetting_threshold=reflection_forgetting_threshold)
+        self.semantic_memory = (SemanticMemory(semantic_memory_root, semantic_memory_dataset)
+                                if semantic_memory_root and semantic_memory_dataset else None)
         self.observe_interval_steps = max(int(observe_interval_steps), 1)
         self.task_summary = None
         self.task_path = ""
@@ -454,7 +458,8 @@ class FeedbackMonitor(object):
                 or not self.task_summary):
             return None
         risk_map = build_risk_map(self.state, drift_threshold, confusion_threshold,
-                                  entropy_threshold, similarity_threshold)
+                                  entropy_threshold, similarity_threshold,
+                                  semantic_memory=self.semantic_memory)
         risk_map_dict = risk_map.to_dict()
         risk_map_dict["config_fingerprint"] = hashlib.sha1(
             json.dumps({"drift_threshold": drift_threshold,

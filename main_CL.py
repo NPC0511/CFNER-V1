@@ -97,7 +97,9 @@ def main_cl(params):
             params, "gradient_conflict_enabled", True),
         reflection_enabled=getattr(params, "reflection_enabled", True),
         reflection_forgetting_threshold=getattr(
-            params, "reflection_forgetting_threshold", 1.0)
+            params, "reflection_forgetting_threshold", 1.0),
+        semantic_memory_root=getattr(params, "semantic_memory_root", None),
+        semantic_memory_dataset=getattr(params, "semantic_memory_dataset", None)
     )
     observe_only_policy = ObserveOnlyPolicy(
         max_action_delta=getattr(params, "max_action_delta", 0.05),

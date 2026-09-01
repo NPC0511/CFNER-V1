@@ -53,7 +53,8 @@ class SemanticRiskMap:
 
 def build_risk_map(state, drift_threshold=0.15, confusion_threshold=0.20,
                    entropy_threshold=1.0, similarity_threshold=0.50,
-                   high_score=0.60, medium_score=0.30):
+                   high_score=0.60, medium_score=0.30,
+                   semantic_memory=None):
     """Build a bounded [0, 1] risk score from current monitor evidence."""
     risk_map = SemanticRiskMap(task_id=state.task_id, step=state.step)
     for entity_type, item in state.old_classes.items():
@@ -91,9 +92,15 @@ def build_risk_map(state, drift_threshold=0.15, confusion_threshold=0.20,
     for source in state.new_types:
         for target in state.old_types:
             node = risk_map.nodes.get(target, RiskNode(target))
+            prior_risk, prior_types, prior_reason = (semantic_memory.rule_risk(source, target)
+                                                     if semantic_memory is not None else (0.0, [], ""))
+            fused_risk = max(node.score, prior_risk)
             risk_map.edges.append(RiskEdge(
-                source=source, target=target, risk=node.score,
-                risk_type=list(node.reasons), evidence=dict(node.evidence),
-                reason=("Observed evidence for old target %s; source-specific "
-                        "semantic prior is not configured." % target)))
+                source=source, target=target, risk=fused_risk,
+                risk_type=list(dict.fromkeys(prior_types + list(node.reasons))),
+                evidence=dict(node.evidence, rule_risk=prior_risk),
+                reason=prior_reason or ("Observed evidence for old target %s; source-specific "
+                                        "semantic prior is not configured." % target),
+                source_kind="reviewed_rule_plus_observed_evidence" if semantic_memory
+                else "observed_training_evidence"))
     return risk_map

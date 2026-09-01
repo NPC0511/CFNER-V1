@@ -5,8 +5,10 @@ from .policy import AdaptiveDistillationPolicy, ActionRecord, ActionRequest, Obs
 from .state import OldClassState, TaskReflection, TrainingState
 from .semantic_risk import RiskEdge, RiskNode, SemanticRiskMap, build_risk_map
 from .reflection import ReflectionMemory
+from .semantic_memory import SemanticMemory
 
 __all__ = ["AdaptiveDistillationPolicy", "ActionRecord", "ActionRequest", "FeedbackMonitor", "ObserveOnlyPolicy", "RiskGatedDistillationPolicy",
            "OldClassState", "TaskReflection", "TrainingState"]
 __all__ += ["RiskEdge", "RiskNode", "SemanticRiskMap", "build_risk_map"]
 __all__ += ["ReflectionMemory"]
+__all__ += ["SemanticMemory"]
