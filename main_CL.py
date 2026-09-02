@@ -304,12 +304,19 @@ def main_cl(params):
             task_graph_path = feedback_monitor.record_task_risk_graph(task_risk_graph)
             trainer.set_risk_kd_policy(
                 risk_kd_policy,
-                enabled=getattr(params, "risk_weighted_kd_enabled", False))
+                enabled=getattr(params, "risk_weighted_kd_enabled", False),
+                prototype_anchor_enabled=getattr(
+                    params, "risk_prototype_anchor_enabled", False),
+                prototype_anchor_scale=getattr(
+                    params, "risk_prototype_anchor_scale", 1.0),
+                prototype_anchor_min_count=getattr(
+                    params, "risk_prototype_anchor_min_count", 1))
             logger.info("Frozen task risk KD policy saved to %s: target_risks=%s, label_weights=%s",
                         task_graph_path, risk_kd_policy.target_risks,
                         risk_kd_policy.label_weights)
         else:
-            trainer.set_risk_kd_policy(None, enabled=False)
+            trainer.set_risk_kd_policy(None, enabled=False,
+                                       prototype_anchor_enabled=False)
         # Establish the no-action control record for later paired experiments.
         if getattr(params, "action_logging_enabled", False):
             feedback_monitor.record_action(observe_only_policy.validate(ActionRequest(

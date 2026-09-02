@@ -59,3 +59,19 @@ def weighted_kl_by_teacher_label(student_log_scores, teacher_probabilities,
         weights = torch.where(teacher_label_ids == int(label_id),
                               weights.new_full((), float(value)), weights)
     return per_token.mean(), (per_token * weights).mean(), weights
+
+
+def build_prototype_anchor_targets(prototypes, counts, label_weights,
+                                   min_count=1):
+    """Select finite, observed old-class prototypes for classifier anchoring."""
+    import torch
+    selected = []
+    for label_id in range(1, int(prototypes.shape[0])):
+        count = int(counts[label_id].detach().cpu().item())
+        if count < int(min_count):
+            continue
+        prototype = prototypes[label_id]
+        if not bool(torch.isfinite(prototype).all().item()):
+            continue
+        selected.append((label_id, float(label_weights.get(label_id, 1.0)), count))
+    return selected

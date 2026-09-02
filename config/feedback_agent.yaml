@@ -48,6 +48,9 @@ risk_kd_medium_threshold: 0.50
 risk_kd_high_threshold: 0.75
 risk_kd_medium_weight: 1.15
 risk_kd_high_weight: 1.30
+risk_prototype_anchor_enabled: false
+risk_prototype_anchor_scale: 1.0
+risk_prototype_anchor_min_count: 1
 checkpoint_selection_metric: cumulative_macro_f1
 
 # P4: disabled by default. When enabled, a bounded KD multiplier reacts only

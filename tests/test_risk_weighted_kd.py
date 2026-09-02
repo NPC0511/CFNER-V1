@@ -7,7 +7,7 @@ except ModuleNotFoundError:
     TORCH_AVAILABLE = False
 
 from src.feedback_agent.qwen_advisor import QwenRiskAdvisor
-from src.feedback_agent.risk_kd import build_risk_kd_policy
+from src.feedback_agent.risk_kd import build_risk_kd_policy, build_prototype_anchor_targets
 from src.feedback_agent.semantic_risk import RiskEdge
 
 
@@ -29,6 +29,14 @@ class RiskPolicyTests(unittest.TestCase):
                '"reason_tags":["short_reason_tag"]}')
         with self.assertRaisesRegex(ValueError, "template_rejected"):
             advisor._parse_edge(raw, "misc", "location")
+
+    @unittest.skipUnless(TORCH_AVAILABLE, "PyTorch is required for prototype tests")
+    def test_anchor_selects_only_observed_finite_old_labels(self):
+        prototypes = torch.tensor([[0., 0.], [1., 1.], [float("nan"), 1.]])
+        counts = torch.tensor([0, 3, 4])
+        selected = build_prototype_anchor_targets(
+            prototypes, counts, {1: 1.30, 2: 1.15})
+        self.assertEqual(selected, [(1, 1.30, 3)])
 
 
 @unittest.skipUnless(TORCH_AVAILABLE, "PyTorch is required for KD tests")

@@ -19,7 +19,9 @@ from transformers import AutoTokenizer
 
 from src.dataloader import *
 from src.utils import *
-from src.feedback_agent.risk_kd import label_id_weights, weighted_kl_by_teacher_label
+from src.feedback_agent.risk_kd import (build_prototype_anchor_targets,
+                                        label_id_weights,
+                                        weighted_kl_by_teacher_label)
 
 logger = logging.getLogger()
 params = get_params()
@@ -42,8 +44,13 @@ class BaseTrainer(object):
         self.risk_kd_label_weights = {}
         self.risk_kd_policy = {}
         self.risk_kd_diagnostics = {}
+        self.risk_prototype_anchor_enabled = False
+        self.risk_prototype_anchor_scale = 1.0
 
-    def set_risk_kd_policy(self, policy, enabled=False):
+    def set_risk_kd_policy(self, policy, enabled=False,
+                           prototype_anchor_enabled=False,
+                           prototype_anchor_scale=1.0,
+                           prototype_anchor_min_count=1):
         self.risk_kd_policy = policy.to_dict() if policy is not None else {}
         self.risk_kd_label_weights = (label_id_weights(policy, self.label_list)
                                       if enabled and policy is not None else {})
@@ -53,6 +60,18 @@ class BaseTrainer(object):
             "token_counts": {}, "unweighted_logits_kd_sum": 0.0,
             "weighted_logits_kd_sum": 0.0, "batches": 0
         }
+        self.risk_prototype_anchor_enabled = bool(prototype_anchor_enabled)
+        self.risk_prototype_anchor_scale = float(prototype_anchor_scale)
+        self.risk_prototype_anchor_min_count = int(prototype_anchor_min_count)
+        self.risk_kd_diagnostics.update({
+            "prototype_anchor_enabled": self.risk_prototype_anchor_enabled,
+            "prototype_anchor_scale": self.risk_prototype_anchor_scale,
+            "prototype_anchor_selected": {},
+            "prototype_anchor_skipped": {},
+            "prototype_anchor_unweighted_sum": 0.0,
+            "prototype_anchor_weighted_sum": 0.0,
+            "prototype_anchor_batches": 0,
+        })
 
     def get_risk_kd_diagnostics(self):
         diagnostics = dict(self.risk_kd_diagnostics)
@@ -64,7 +83,49 @@ class BaseTrainer(object):
         diagnostics["mean_weighted_kd_contribution"] = (
             float(self.params.distill_logits_weight)
             * diagnostics["mean_weighted_logits_kd"])
+        anchor_batches = diagnostics.get("prototype_anchor_batches", 0)
+        diagnostics["mean_prototype_anchor_unweighted"] = (
+            diagnostics.get("prototype_anchor_unweighted_sum", 0.0) /
+            anchor_batches if anchor_batches else 0.0)
+        diagnostics["mean_prototype_anchor_weighted"] = (
+            diagnostics.get("prototype_anchor_weighted_sum", 0.0) /
+            anchor_batches if anchor_batches else 0.0)
         return diagnostics
+
+    def _prototype_anchor_loss(self):
+        """Anchor finite, sufficiently observed old prototypes only."""
+        import torch
+        import torch.nn.functional as F
+        diagnostics = self.risk_kd_diagnostics
+        zero = self.logits.sum() * 0.0
+        if (not self.risk_prototype_anchor_enabled or
+                not hasattr(self, "prototypes") or self.prototypes is None):
+            diagnostics["prototype_anchor_skipped"]["disabled_or_missing"] = (
+                diagnostics["prototype_anchor_skipped"].get("disabled_or_missing", 0) + 1)
+            return zero
+        selected = build_prototype_anchor_targets(
+            self.prototypes, self.count_features,
+            self.risk_kd_label_weights or {},
+            min_count=self.risk_prototype_anchor_min_count)
+        if not selected:
+            diagnostics["prototype_anchor_skipped"]["no_valid_prototypes"] = (
+                diagnostics["prototype_anchor_skipped"].get("no_valid_prototypes", 0) + 1)
+            return zero
+        label_ids = torch.tensor([item[0] for item in selected], device=self.prototypes.device)
+        weights = torch.tensor([item[1] for item in selected],
+                               dtype=self.prototypes.dtype, device=self.prototypes.device)
+        features = self.prototypes[label_ids].detach().unsqueeze(0)
+        logits = self.model.forward_classifier(features).squeeze(0)
+        per_class = F.cross_entropy(logits, label_ids, reduction="none")
+        unweighted = per_class.mean()
+        weighted = (per_class * weights).mean() * self.risk_prototype_anchor_scale
+        diagnostics["prototype_anchor_batches"] += 1
+        diagnostics["prototype_anchor_unweighted_sum"] += float(unweighted.detach().item())
+        diagnostics["prototype_anchor_weighted_sum"] += float(weighted.detach().item())
+        for label_id, weight, count in selected:
+            name = self.label_list[label_id] if label_id < len(self.label_list) else str(label_id)
+            diagnostics["prototype_anchor_selected"][name] = {"count": count, "weight": weight}
+        return weighted
 
     
     def batch_forward(self, inputs):    
@@ -289,7 +350,11 @@ class BaseTrainer(object):
 
 
 
-        distill_loss = self.params.soft_param * loss_soft_label + self.params.regular_param * Regularizer_soft + self.params.distill_logits_weight * self.adaptive_distillation_multiplier * distill_logits_loss
+        prototype_anchor_loss = self._prototype_anchor_loss()
+        distill_loss = (self.params.soft_param * loss_soft_label
+                        + self.params.regular_param * Regularizer_soft
+                        + self.params.distill_logits_weight * self.adaptive_distillation_multiplier * distill_logits_loss
+                        + prototype_anchor_loss)
 
         self.loss = ce_loss + distill_loss
         self.last_new_loss = ce_loss
