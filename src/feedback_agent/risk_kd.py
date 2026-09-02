@@ -50,6 +50,7 @@ def label_id_weights(policy, label_list):
 def weighted_kl_by_teacher_label(student_log_scores, teacher_probabilities,
                                  teacher_label_ids, label_weights):
     """Return token-mean baseline and risk-weighted KL terms plus diagnostics."""
+    import torch
     import torch.nn.functional as F
     per_token = F.kl_div(student_log_scores, teacher_probabilities,
                          reduction="none").sum(dim=-1)
